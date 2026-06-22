@@ -1,0 +1,9 @@
+# Journey-Forge Local — Python runtime deps (server + control panel).
+# The control panel opens in your system browser, so no GUI toolkit is needed.
+fastapi>=0.110
+uvicorn>=0.27
+
+# Optional native window instead of the browser. Pulls the pyobjc Cocoa/WebKit
+# backend on macOS (can be slow/fragile to install). Enable with
+# JFL_USE_PYWEBVIEW=1 after installing it:  pip install pywebview
+# pywebview>=5.0

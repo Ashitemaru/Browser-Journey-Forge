@@ -6,8 +6,8 @@ export default defineConfig({
   outDir: 'dist',
   manifest: ({ browser }) => {
     const manifest = {
-      name: 'Journey Forge Recorder',
-      description: 'Record, review, redact, and upload browser user journeys.',
+      name: 'Journey-Forge Local',
+      description: 'Local product: record a browser task and upload it to your local Journey-Forge server.',
       permissions: [
         'storage',
         'tabs',
@@ -28,7 +28,7 @@ export default defineConfig({
       ],
       action: {
         default_popup: 'popup.html',
-        default_title: 'Journey Forge'
+        default_title: 'Journey-Forge Local'
       }
     };
 

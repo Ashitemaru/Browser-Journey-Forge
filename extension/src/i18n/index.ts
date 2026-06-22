@@ -3,10 +3,10 @@ export type LocalePreference = 'auto' | Locale;
 export type TranslationParams = Record<string, string | number>;
 
 const en = {
-  'app.popupTitle': 'Journey Forge',
+  'app.popupTitle': 'Journey-Forge Local',
   'app.popupSubtitle': '{browser} recorder{panel}',
   'app.sidePanelSuffix': ' side panel',
-  'app.dashboardTitle': 'Journey Forge Recorder',
+  'app.dashboardTitle': 'Journey-Forge Local',
   'app.dashboardSubtitle': 'Review local recordings and manage upload settings.',
   'app.dashboardViews': 'Dashboard views',
   'app.recordingSummary': 'Recording summary',
@@ -342,10 +342,10 @@ const en = {
 } as const;
 
 const zhCN: Record<keyof typeof en, string> = {
-  'app.popupTitle': 'Journey Forge',
+  'app.popupTitle': 'Journey-Forge Local',
   'app.popupSubtitle': '{browser} 录制器{panel}',
   'app.sidePanelSuffix': '侧边栏',
-  'app.dashboardTitle': 'Journey Forge 录制器',
+  'app.dashboardTitle': 'Journey-Forge Local',
   'app.dashboardSubtitle': '查看本地录制，并管理上传设置。',
   'app.dashboardViews': '控制台视图',
   'app.recordingSummary': '录制汇总',

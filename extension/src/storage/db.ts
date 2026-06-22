@@ -35,7 +35,7 @@ export class JourneyForgeDB extends Dexie {
   uploadManifests!: Table<UploadManifest, string>;
   config!: Table<ConfigRow, 'singleton'>;
 
-  constructor(name = 'journey-forge') {
+  constructor(name = 'journey-forge-local') {
     super(name);
     this.version(1).stores({
       recordings: 'trace_id, status, created_at, updated_at, upload_id',
