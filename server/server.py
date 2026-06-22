@@ -52,15 +52,17 @@ from fastapi.staticfiles import StaticFiles
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 REPO = Path(__file__).resolve().parents[1]            # journey-forge-local/
+# Make the `harness` package importable in-process (server.py lives in server/).
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 DATA_DIR = Path(os.environ.get("JFL_DATA_DIR", str(REPO / "data")))
+# Make sure the in-process harness (harness.config) resolves the same data dir.
+os.environ.setdefault("JFL_DATA_DIR", str(DATA_DIR))
 TRACES_DIR = DATA_DIR / "traces"
-TRACKS_DIR = DATA_DIR / "tracks"                       # distiller input (converted)
-SKILLS_LIB = DATA_DIR / "skills"                       # raw distiller output library
+HARNESS_STATE = DATA_DIR / "harness"                   # pipeline state: buckets/skills/registry
 API_KEYS_FILE = DATA_DIR / "api-keys.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 
-DISTILLER = REPO / "distiller" / "distill.mjs"
-INSTALLER = REPO / "installer" / "install-skill.mjs"
 APP_BUILD = REPO / "app" / "dist"                      # control-panel SPA build
 EXT_BUILD = REPO / "extension" / "dist" / "chrome-mv3"  # wxt build output
 
@@ -113,7 +115,7 @@ def _save_config(cfg: dict) -> None:
 
 # ── Generic helpers (ported from the research server, trimmed) ───────────────
 def _ensure_dirs() -> None:
-    for d in (DATA_DIR, TRACES_DIR, TRACKS_DIR, SKILLS_LIB):
+    for d in (DATA_DIR, TRACES_DIR, HARNESS_STATE):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -327,7 +329,7 @@ async def finalize_trace(upload_id: str, request: Request, authorization: str = 
     if _load_config().get("auto_distill"):
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "running"
-        threading.Thread(target=_distill_and_install, args=(upload_id,), daemon=True).start()
+        threading.Thread(target=_ingest_distill_install, args=(upload_id,), daemon=True).start()
         logger.info("[finalize] %s: auto-distill started", upload_id)
 
     return {"status": "accepted", "trace_id": trace_id}
@@ -374,7 +376,7 @@ def _assemble_trace(upload_id: str, meta: dict) -> list[dict]:
                 errors.append({"index": idx, "error": f"bad event json: {e}"})
 
     trace = {
-        "schema_version": meta.get("schema_version", "journey_trace_v1"),
+        "schema_version": meta.get("schema_version") or "journey_trace_v1",
         "trace_id": meta["trace_id"],
         "recording_mode": meta.get("recording_mode"),
         "label": meta.get("label", ""),
@@ -385,139 +387,60 @@ def _assemble_trace(upload_id: str, meta: dict) -> list[dict]:
     }
     _atomic_write(td / "trace.json", json.dumps(trace, ensure_ascii=False))
     logger.info("[assemble] %s: %d events", meta["trace_id"], len(events))
-    _convert_to_track(trace, upload_id)
     return errors
 
 
-def _convert_to_track(trace: dict, upload_id: str) -> Path:
-    """Convert the capture-schema trace into the flat track the distiller reads.
-
-    Same event normalization as the research server, MINUS all ClawBench scoring
-    (no eval_schema, no interception, no outcome).
-    """
-    events_out: list[dict] = []
-    base_ts = None
-    for ev in trace.get("events", []):
-        kind = ev.get("kind")
-        ts = ev.get("timestamp", 0)
-        if base_ts is None:
-            base_ts = ts
-        if kind == "action":
-            at = ev.get("action_type", "click")
-            if at in ("focus", "blur", "contextmenu", "copy", "cut", "selection"):
-                continue
-            if at == "dblclick":
-                at = "click"
-            if at == "wheel":
-                at = "scroll"
-            if at == "file_select":
-                at = "change"
-            target = ev.get("target") or {}
-            coords = ev.get("coords") or {}
-            rv = ev.get("value")
-            value = rv.get("value") if isinstance(rv, dict) else rv
-            e = {"type": at, "url": ev.get("url", ""), "ts": ts - base_ts}
-            t = {}
-            if target.get("tag"):
-                t["tagName"] = target["tag"]
-            if target.get("id"):
-                t["id"] = target["id"]
-            if target.get("text") or target.get("name"):
-                t["textContent"] = (target.get("text") or target.get("name") or "")[:200]
-            if target.get("xpath"):
-                t["xpath"] = target["xpath"]
-            if t:
-                e["target"] = t
-            if value is not None:
-                e["value"] = value
-            if ev.get("key"):
-                e["key"] = ev["key"]
-            if coords.get("x") is not None:
-                e["x"] = coords["x"]
-            if coords.get("y") is not None:
-                e["y"] = coords["y"]
-            events_out.append(e)
-        elif kind == "navigation":
-            nav_type = ev.get("nav_type", "load")
-            etype = "pageLoad" if nav_type == "load" else "navigation"
-            url = ev.get("to_url") or ev.get("url", "")
-            events_out.append({"type": etype, "url": url, "ts": ts - (base_ts or 0)})
-
-    events_out.sort(key=lambda e: e["ts"])
-
-    nav_chain: list[str] = []
-    for ev in events_out:
-        if ev["type"] == "pageLoad":
-            rd = _registered_domain(ev["url"])
-            if rd and (not nav_chain or nav_chain[-1] != rd):
-                nav_chain.append(rd)
-    counts: dict[str, int] = {}
-    for ev in events_out:
-        rd = _registered_domain(ev.get("url", ""))
-        if rd:
-            counts[rd] = counts.get(rd, 0) + 1
-    domain = max(counts, key=counts.get) if counts else ""
-
-    label = (trace.get("label") or "").strip()
-    track = {
-        "schema_version": "jfl_track_v1",
-        "upload_id": upload_id,
-        "trace_id": trace.get("trace_id"),
-        "label": label,
-        "task_instruction": (trace.get("description") or label).strip(),
-        "domain": domain,
-        "navigation_chain": nav_chain,
-        "events": events_out,
-    }
-    out = TRACKS_DIR / f"{upload_id}.json"
-    _atomic_write(out, json.dumps(track, indent=2, ensure_ascii=False))
-    logger.info("[convert] → %s (%d events)", out, len(events_out))
-    return out
+# ── Distillation pipeline (harness: atomize → classify → bucket → distill) ────
+def _harness_env(cfg: dict) -> dict:
+    env = dict(os.environ)
+    env["JFL_DATA_DIR"] = str(DATA_DIR)
+    env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
+    env["SF_LLM_KEY"] = cfg.get("llm_key", "")
+    env["SF_LLM_BASE"] = cfg.get("llm_base", "")
+    env["SF_DISTILL_MODEL"] = cfg.get("distill_model", "")
+    return env
 
 
-# ── Distillation + install (background) ──────────────────────────────────────
-def _distill_and_install(upload_id: str) -> None:
+def _run_harness(args: list[str], cfg: dict, timeout: int) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "harness.main", *args],
+        cwd=str(REPO), capture_output=True, text=True, env=_harness_env(cfg), timeout=timeout,
+    )
+
+
+def _install_all(cfg: dict) -> list[dict]:
+    """Install every distilled bucket skill into the chosen skills root (Code + Desktop zip)."""
+    from harness.install import install_registry
+    return install_registry(Path(cfg["skills_root"]))
+
+
+def _ingest_distill_install(upload_id: str) -> None:
+    """Ingest one trace into the buckets, distill ready buckets, install skills."""
     cfg = _load_config()
-    track = TRACKS_DIR / f"{upload_id}.json"
-    out_dir = SKILLS_LIB / upload_id
     try:
         if not cfg.get("llm_key"):
             raise RuntimeError("no LLM API key configured (set it in Settings)")
-        env = dict(os.environ)
-        # 1) distill the track → SKILL.md in out_dir
-        r1 = subprocess.run(
-            ["node", str(DISTILLER),
-             "--track", str(track), "--out", str(out_dir),
-             "--model", cfg["distill_model"], "--llm-base", cfg["llm_base"],
-             "--llm-key", cfg["llm_key"]],
-            capture_output=True, text=True, env=env, timeout=600,
-        )
+        trace_json = _trace_dir(upload_id) / "trace.json"
+        r1 = _run_harness(["ingest", "--track-file", str(trace_json)], cfg, 600)
         if r1.returncode != 0:
-            raise RuntimeError(f"distill failed: {r1.stderr[-1500:] or r1.stdout[-1500:]}")
-        skill_md = out_dir / "SKILL.md"
-        if not skill_md.exists():
-            raise RuntimeError("distiller produced no SKILL.md")
-        # 2) wrap with frontmatter + install into the chosen skills root
-        r2 = subprocess.run(
-            ["node", str(INSTALLER),
-             "--skill", str(skill_md), "--skills-root", cfg["skills_root"]],
-            capture_output=True, text=True, env=env, timeout=60,
-        )
+            raise RuntimeError(f"ingest failed: {(r1.stderr or r1.stdout)[-1500:]}")
+        r2 = _run_harness(["distill"], cfg, 1200)
         if r2.returncode != 0:
-            raise RuntimeError(f"install failed: {r2.stderr[-1500:] or r2.stdout[-1500:]}")
-        lines = [ln for ln in (r2.stdout or "").splitlines() if ln.strip()]
-        installed = lines[-1] if lines else ""                 # Claude Code SKILL.md
-        zip_path = next((ln[4:].strip() for ln in lines if ln.startswith("ZIP ")), "")  # Desktop upload bundle
+            raise RuntimeError(f"distill failed: {(r2.stderr or r2.stdout)[-1500:]}")
+        installed = _install_all(cfg)
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "done"
-            meta["distill_result"] = {"ok": True, "installed_path": installed,
-                                      "zip_path": zip_path, "library": str(out_dir)}
-        logger.info("[distill] %s: installed → %s (zip %s)", upload_id, installed, zip_path or "-")
+            meta["distill_result"] = {
+                "ok": True, "installed_count": len(installed),
+                "ingest_log": (r1.stdout or "")[-1500:],
+                "distill_log": (r2.stdout or "")[-1500:],
+            }
+        logger.info("[pipeline] %s: ok, %d skill(s) installed", upload_id, len(installed))
     except Exception as e:  # noqa: BLE001
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "error"
             meta["distill_result"] = {"ok": False, "error": str(e)}
-        logger.error("[distill] %s failed: %s", upload_id, e)
+        logger.error("[pipeline] %s failed: %s", upload_id, e)
 
 
 # ── Control API (for the panel) ──────────────────────────────────────────────
@@ -556,9 +479,9 @@ def api_traj(authorization: str = Header(None)):
 def api_traj_one(upload_id: str, authorization: str = Header(None)):
     _check_auth(authorization)
     meta = _load_meta(upload_id)
-    track_path = TRACKS_DIR / f"{upload_id}.json"
-    track = json.loads(track_path.read_text()) if track_path.exists() else None
-    return {"meta": meta, "track": track}
+    trace_path = _trace_dir(upload_id) / "trace.json"
+    trace = json.loads(trace_path.read_text()) if trace_path.exists() else None
+    return {"meta": meta, "trace": trace}
 
 
 @app.get("/api/skills")
@@ -582,8 +505,81 @@ def api_distill(upload_id: str, authorization: str = Header(None)):
     _load_meta(upload_id)  # 404s if unknown
     with update_meta(upload_id) as meta:
         meta["distill_status"] = "running"
-    threading.Thread(target=_distill_and_install, args=(upload_id,), daemon=True).start()
+    threading.Thread(target=_ingest_distill_install, args=(upload_id,), daemon=True).start()
     return {"ok": True, "upload_id": upload_id}
+
+
+# ── Capacity buckets (per-site skill buckets) ────────────────────────────────
+def _read_json_file(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return default
+
+
+@app.get("/api/buckets")
+def api_buckets(authorization: str = Header(None)):
+    _check_auth(authorization)
+    buckets = _read_json_file(HARNESS_STATE / "buckets.json", {}).get("buckets", {})
+    reg = {s["capacity_id"]: s for s in _read_json_file(HARNESS_STATE / "registry.json", {}).get("skills", [])}
+    by_domain: dict[str, list] = {}
+    for bid, b in buckets.items():
+        dom = b.get("domain", "")
+        entry = reg.get(bid)
+        by_domain.setdefault(dom, []).append({
+            "bucket_id": bid,
+            "capacity": b.get("canonical_capacity", ""),
+            "description": b.get("description", ""),
+            "segments": len(b.get("segment_ids", [])),
+            "version": b.get("distill_version", 0),
+            "distilled": b.get("distill_version", 0) > 0,
+            "dirty": b.get("dirty", True),
+            "skill_name": entry.get("skill_name") if entry else None,
+            "scope": entry.get("scope", "") if entry else "",
+        })
+    domains = [
+        {"domain": d, "buckets": sorted(v, key=lambda x: -x["segments"])}
+        for d, v in sorted(by_domain.items())
+    ]
+    total = sum(len(d["buckets"]) for d in domains)
+    return {"domains": domains, "bucket_count": total}
+
+
+def _bucket_skill_dir(bucket_id: str) -> Path:
+    if "::" not in bucket_id:
+        raise HTTPException(400, "bad bucket id")
+    domain, cap = bucket_id.split("::", 1)
+    if "/" in domain or "/" in cap or ".." in bucket_id:
+        raise HTTPException(400, "bad bucket id")
+    return HARNESS_STATE / "skills" / domain / cap
+
+
+@app.get("/api/skill")
+def api_skill(bucket: str, authorization: str = Header(None)):
+    _check_auth(authorization)
+    d = _bucket_skill_dir(bucket)
+    sk = d / "SKILL.md"
+    if not sk.is_file():
+        raise HTTPException(404, "no distilled skill for this bucket yet")
+    tg = d / "TRACE_GUIDE.md"
+    return {
+        "bucket_id": bucket,
+        "skill_md": sk.read_text(),
+        "trace_guide_md": tg.read_text() if tg.is_file() else "",
+        "meta": _read_json_file(d / "meta.json", {}),
+    }
+
+
+@app.get("/api/skill/zip")
+def api_skill_zip(bucket: str, authorization: str = Header(None)):
+    _check_auth(authorization)
+    d = _bucket_skill_dir(bucket)
+    zips = sorted(d.glob("*.zip"))
+    if not zips:
+        raise HTTPException(404, "no Desktop bundle yet (distill first)")
+    return FileResponse(zips[0], media_type="application/zip", filename=zips[0].name)
 
 
 @app.delete("/api/skills/{name}")
@@ -714,17 +710,6 @@ def api_desktop_playwright(authorization: str = Header(None)):
         "restart_required": not already,
         "message": "Playwright MCP configured. Restart Claude Desktop to apply.",
     }
-
-
-@app.get("/api/skills/zip/{upload_id}")
-def api_skill_zip(upload_id: str, authorization: str = Header(None)):
-    """Download the Claude Desktop upload bundle (<name>.zip) for a trajectory."""
-    _check_auth(authorization)
-    meta = _load_meta(upload_id)
-    zip_path = ((meta.get("distill_result") or {}).get("zip_path") or "")
-    if not zip_path or not Path(zip_path).is_file():
-        raise HTTPException(404, "No Desktop upload bundle for this trajectory (distill first)")
-    return FileResponse(zip_path, media_type="application/zip", filename=Path(zip_path).name)
 
 
 # ── Static control panel (mounted last so /api & /v1 win) ────────────────────

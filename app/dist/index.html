@@ -12,19 +12,22 @@
   header h1{font-size:16px;margin:0;font-weight:650}
   header .sp{flex:1}
   .keybox{display:flex;gap:6px;align-items:center;color:var(--mut)}
-  .keybox input{width:200px;background:var(--bg);border:1px solid var(--line);color:var(--fg);padding:5px 8px;border-radius:6px}
+  .keybox input{width:190px;background:var(--bg);border:1px solid var(--line);color:var(--fg);padding:5px 8px;border-radius:6px}
   nav{display:flex;gap:4px;padding:10px 20px 0}
   nav button{background:none;border:none;color:var(--mut);padding:8px 14px;border-radius:8px 8px 0 0;cursor:pointer;font-size:13px}
   nav button.on{color:var(--fg);background:var(--panel)}
-  main{padding:18px 20px}
+  main{padding:18px 20px;max-width:1100px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
-  .card h2{margin:0 0 10px;font-size:14px}
+  .card h2{margin:0 0 4px;font-size:14px}
+  .site h3{margin:14px 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .site h3 .dom{font-family:ui-monospace,Menlo,monospace}
   table{width:100%;border-collapse:collapse}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
   th{color:var(--mut);font-weight:550;font-size:12px}
   .pill{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;border:1px solid var(--line)}
   .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.run{color:var(--warn);border-color:var(--warn)}
   .pill.err{color:var(--err);border-color:var(--err)} .pill.mut{color:var(--mut)}
+  .cap{font-weight:600} .desc{color:var(--mut);font-size:12px;margin-top:2px}
   button.act{background:var(--acc);border:none;color:#fff;padding:6px 11px;border-radius:7px;cursor:pointer;font-size:12px}
   button.ghost{background:none;border:1px solid var(--line);color:var(--fg);padding:6px 11px;border-radius:7px;cursor:pointer;font-size:12px}
   button.danger{background:none;border:1px solid var(--err);color:var(--err)}
@@ -33,10 +36,15 @@
   input[type=text],input[type=password],select{width:100%;max-width:520px;background:var(--bg);border:1px solid var(--line);color:var(--fg);padding:8px 10px;border-radius:7px}
   code,pre{font-family:ui-monospace,Menlo,monospace}
   pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px}
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .mut{color:var(--mut)} .ok{color:var(--ok)} .err{color:var(--err)}
-  .toast{position:fixed;right:18px;bottom:18px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);padding:10px 14px;border-radius:8px;max-width:380px;opacity:0;transition:.2s}
+  .toast{position:fixed;right:18px;bottom:18px;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);padding:10px 14px;border-radius:8px;max-width:380px;opacity:0;transition:.2s;z-index:50}
   .toast.show{opacity:1}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40}
+  .overlay.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(820px,92vw);max-height:86vh;display:flex;flex-direction:column}
+  .modal header{justify-content:space-between}
+  .modal .body{overflow:auto;padding:0 16px 16px}
 </style>
 </head>
 <body>
@@ -47,111 +55,95 @@
   <div class="keybox">server key <input id="apikey" type="password" placeholder="jfl-local-dev-key" /></div>
 </header>
 <nav>
-  <button data-tab="traj" class="on">Trajectories</button>
-  <button data-tab="skills">Skills</button>
+  <button data-tab="sites" class="on">Sites &amp; skills</button>
+  <button data-tab="traj">Trajectories</button>
   <button data-tab="browser">Browser&nbsp;execution</button>
-  <button data-tab="ext">Extension</button>
   <button data-tab="settings">Settings</button>
 </nav>
 <main id="main"></main>
 <div class="toast" id="toast"></div>
+<div class="overlay" id="overlay"><div class="modal">
+  <header><strong id="m-title">SKILL.md</strong><button class="ghost" onclick="closeModal()">Close</button></header>
+  <div class="body"><pre id="m-body"></pre></div>
+</div></div>
 
 <script>
 const $ = (s,e=document)=>e.querySelector(s);
 const main = $('#main');
-const KEY_LS = 'jfl_api_key';
 const keyInput = $('#apikey');
-keyInput.value = localStorage.getItem(KEY_LS) || 'jfl-local-dev-key';
-keyInput.addEventListener('change',()=>{localStorage.setItem(KEY_LS,keyInput.value);refresh();});
+keyInput.value = localStorage.getItem('jfl_api_key') || 'jfl-local-dev-key';
+keyInput.addEventListener('change',()=>{localStorage.setItem('jfl_api_key',keyInput.value);refresh();});
 
 function authHeaders(extra){return Object.assign({'Authorization':'Bearer '+keyInput.value}, extra||{});}
 async function api(path, opts){
-  const o = Object.assign({headers:{}}, opts||{});
-  o.headers = authHeaders(o.headers);
-  const r = await fetch(path, o);
-  if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error(r.status+' '+t.slice(0,200)); }
-  const ct = r.headers.get('content-type')||'';
-  return ct.includes('json') ? r.json() : r;
+  const o = Object.assign({headers:{}}, opts||{}); o.headers = authHeaders(o.headers);
+  const r = await fetch(path,o);
+  if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(r.status+' '+t.slice(0,200)); }
+  const ct=r.headers.get('content-type')||''; return ct.includes('json')?r.json():r;
 }
-let toastT;
-function toast(msg, err){const t=$('#toast');t.textContent=msg;t.style.borderLeftColor=err?'var(--err)':'var(--acc)';t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3500);}
+let toastT; function toast(m,err){const t=$('#toast');t.textContent=m;t.style.borderLeftColor=err?'var(--err)':'var(--acc)';t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3500);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-function pill(status){const m={accepted:'ok',done:'ok',running:'run',processing:'run',error:'err',degraded:'err'};return `<span class="pill ${m[status]||'mut'}">${esc(status||'-')}</span>`;}
+function pill(s){const m={accepted:'ok',done:'ok',running:'run',processing:'run',error:'err',degraded:'err'};return `<span class="pill ${m[s]||'mut'}">${esc(s||'-')}</span>`;}
+function openModal(title,body){$('#m-title').textContent=title;$('#m-body').textContent=body;$('#overlay').classList.add('show');}
+function closeModal(){$('#overlay').classList.remove('show');}
+$('#overlay').addEventListener('click',e=>{if(e.target===$('#overlay'))closeModal();});
 
-let TAB='traj';
-document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
-  TAB=b.dataset.tab; document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b)); refresh();
-}));
+let TAB='sites';
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{TAB=b.dataset.tab;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));refresh();}));
+async function pingServer(){try{await fetch('/');$('#srv').textContent='server online';$('#srv').className='pill ok';}catch{$('#srv').textContent='server offline';$('#srv').className='pill err';}}
+async function refresh(){pingServer();try{await ({sites:tabSites,traj:tabTraj,browser:tabBrowser,settings:tabSettings}[TAB])();}catch(e){main.innerHTML=`<div class="card"><span class="err">${esc(e.message)}</span><p class="mut">Check the server key (top right).</p></div>`;}}
 
-async function pingServer(){
-  try{ await fetch('/'); $('#srv').textContent='server online'; $('#srv').className='pill ok'; }
-  catch{ $('#srv').textContent='server offline'; $('#srv').className='pill err'; }
+// ── Sites & skills (per-domain capability buckets) ───────────────────────────
+async function tabSites(){
+  const d = await api('/api/buckets');
+  if(!d.domains.length){ main.innerHTML=`<div class="card"><h2>Sites &amp; skills</h2><p class="mut">No skill buckets yet. Record a task with the extension and finalize it — each capability becomes a bucket under its website, and distills into a skill.</p></div>`; return; }
+  const sites = d.domains.map(site=>{
+    const rows = site.buckets.map(b=>{
+      const status = b.distilled ? `<span class="pill ok">distilled v${b.version}</span>` : `<span class="pill run">pending</span>`;
+      const acts = b.distilled
+        ? `<button class="ghost" onclick="viewSkill('${esc(b.bucket_id)}')">View SKILL.md</button> <button class="ghost" onclick="dlSkillZip('${esc(b.bucket_id)}')">Desktop .zip</button>`
+        : `<span class="mut">awaiting distill</span>`;
+      return `<tr>
+        <td><div class="cap">${esc(b.capacity)}</div><div class="desc">${esc(b.description||b.scope||'')}</div>
+            ${b.skill_name?`<div class="mut" style="font-size:11px">installed: ${esc(b.skill_name)}</div>`:''}</td>
+        <td>${b.segments}</td><td>${status}</td><td><div class="row">${acts}</div></td></tr>`;
+    }).join('');
+    return `<div class="site"><h3><span class="dom">${esc(site.domain||'(unknown site)')}</span>
+        <span class="pill mut">${site.buckets.length} capabilit${site.buckets.length===1?'y':'ies'}</span></h3>
+      <table><thead><tr><th>Capability</th><th>Segments</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  main.innerHTML = `<div class="card"><h2>Sites &amp; skills</h2>
+    <p class="mut">Each website accumulates a bucket of capabilities. Every recorded task is atomized into segments, classified into a capability, and distilled into one reusable skill per capability.</p>
+    ${sites}</div>`;
 }
-
-async function refresh(){
-  pingServer();
-  try{ await ({traj:tabTraj,skills:tabSkills,browser:tabBrowser,ext:tabExt,settings:tabSettings}[TAB])(); }
-  catch(e){ main.innerHTML = `<div class="card"><span class="err">${esc(e.message)}</span><p class="mut">Check the server key (top right).</p></div>`; }
-}
+window.viewSkill = async (bucket)=>{ try{ const r=await api('/api/skill?bucket='+encodeURIComponent(bucket)); openModal(bucket, r.skill_md); }catch(e){ toast(e.message,true);} };
+window.dlSkillZip = async (bucket)=>{ try{ const r=await api('/api/skill/zip?bucket='+encodeURIComponent(bucket)); const blob=await r.blob(); const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=bucket.replace('::','-')+'.zip'; a.click(); URL.revokeObjectURL(u); toast('Downloaded. Upload it in Claude Desktop → Settings → Skills.'); }catch(e){ toast(e.message,true);} };
 
 // ── Trajectories ──────────────────────────────────────────────────────────────
 async function tabTraj(){
   const {trajectories} = await api('/api/traj');
-  const rows = trajectories.map(t=>`
-    <tr>
-      <td><strong>${esc(t.label||'(untitled)')}</strong><div class="mut">${esc(t.description||'')}</div>
+  const rows = trajectories.map(t=>`<tr>
+      <td><strong>${esc(t.label||'(untitled)')}</strong><div class="desc">${esc(t.description||'')}</div>
           <div class="mut" style="font-size:11px">${esc(t.upload_id)} · ${esc((t.created_at||'').slice(0,19).replace('T',' '))} · ${t.n_chunks} chunk(s)</div></td>
-      <td>${pill(t.status)}</td>
-      <td>${pill(t.distill_status)}</td>
-      <td><div class="row">
-        <button class="act" onclick="distill('${t.upload_id}')">Distill</button>
-        <button class="ghost" onclick="dlzip('${t.upload_id}')">Desktop .zip</button>
-      </div></td>
-    </tr>`).join('');
+      <td>${pill(t.status)}</td><td>${pill(t.distill_status)}</td>
+      <td><button class="act" onclick="distill('${t.upload_id}')">Process</button></td></tr>`).join('');
   main.innerHTML = `<div class="card"><h2>Uploaded trajectories</h2>
-    ${trajectories.length? `<table><thead><tr><th>Task</th><th>Upload</th><th>Distill</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-      : '<p class="mut">No trajectories yet. Record one with the extension and finalize it.</p>'}</div>`;
+    <p class="mut">"Process" ingests the trajectory into the capability buckets and distills any that are ready.</p>
+    ${trajectories.length?`<table><thead><tr><th>Task</th><th>Upload</th><th>Pipeline</th><th></th></tr></thead><tbody>${rows}</tbody></table>`:'<p class="mut">No trajectories yet.</p>'}</div>`;
 }
-window.distill = async (id)=>{ try{ await api('/api/distill/'+id,{method:'POST'}); toast('Distill started'); setTimeout(refresh,800);}catch(e){toast(e.message,true);} };
-window.dlzip = async (id)=>{
-  try{ const r = await api('/api/skills/zip/'+id); const blob = await r.blob();
-    const u = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=id+'.zip'; a.click(); URL.revokeObjectURL(u);
-    toast('Downloaded. Upload it in Claude Desktop → Settings → Skills.');
-  }catch(e){ toast(e.message,true); }
-};
-
-// ── Skills (installed for Claude Code) ────────────────────────────────────────
-async function tabSkills(){
-  const d = await api('/api/skills');
-  const rows = (d.installed||[]).map(s=>`<tr><td><strong>${esc(s.name)}</strong><div class="mut" style="font-size:11px">${esc(s.path)}</div></td>
-     <td>${s.bytes} B</td><td><button class="ghost danger" onclick="delskill('${esc(s.name)}')">Delete</button></td></tr>`).join('');
-  main.innerHTML = `<div class="card"><h2>Installed skills (Claude Code)</h2>
-    <p class="mut">Root: <code>${esc(d.skills_root)}</code> — Claude Code reads these automatically. For Claude Desktop, download the <b>.zip</b> from Trajectories and upload it in Settings → Skills.</p>
-    ${(d.installed||[]).length? `<table><thead><tr><th>Name</th><th>Size</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-      : '<p class="mut">No skills installed yet.</p>'}</div>`;
-}
-window.delskill = async (name)=>{ if(!confirm('Delete skill '+name+'?'))return; try{ await api('/api/skills/'+encodeURIComponent(name),{method:'DELETE'}); toast('Deleted'); refresh();}catch(e){toast(e.message,true);} };
+window.distill = async (id)=>{ try{ await api('/api/distill/'+id,{method:'POST'}); toast('Pipeline started'); setTimeout(refresh,1200);}catch(e){toast(e.message,true);} };
 
 // ── Browser execution (Playwright MCP for Claude Desktop) ─────────────────────
 async function tabBrowser(){
   const d = await api('/api/desktop/config');
   main.innerHTML = `<div class="card"><h2>Browser execution — Playwright MCP</h2>
-    <p class="mut">A distilled skill is an operating guide. For Claude Desktop to actually click/type/navigate, it needs the Playwright MCP server configured. A skill does not grant tools by itself.</p>
-    <p>Config file: <code>${esc(d.config_path)}</code> · exists: ${d.config_exists?'<span class="ok">yes</span>':'<span class="mut">no</span>'} · Playwright: ${d.playwright_configured?'<span class="ok">configured</span>':'<span class="err">not configured</span>'}</p>
+    <p class="mut">A distilled skill is an operating guide. For Claude Desktop to actually click/type/navigate, it needs the Playwright MCP server. A skill grants no tools by itself.</p>
+    <p>Config: <code>${esc(d.config_path)}</code> · exists: ${d.config_exists?'<span class="ok">yes</span>':'<span class="mut">no</span>'} · Playwright: ${d.playwright_configured?'<span class="ok">configured</span>':'<span class="err">not configured</span>'}</p>
     <div class="row"><button class="act" onclick="setupPw()">Configure Playwright MCP automatically</button></div>
     <p class="mut" style="margin-top:10px">${esc(d.note)}</p>
-    <details style="margin-top:8px"><summary class="mut">Manual snippet</summary>
-      <pre>${esc(JSON.stringify(d.snippet,null,2))}</pre></details></div>`;
+    <details style="margin-top:8px"><summary class="mut">Manual snippet</summary><pre>${esc(JSON.stringify(d.snippet,null,2))}</pre></details></div>`;
 }
-window.setupPw = async ()=>{ try{ const r = await api('/api/desktop/playwright',{method:'POST'}); toast(r.message); refresh(); }catch(e){ toast(e.message,true); } };
-
-// ── Extension ─────────────────────────────────────────────────────────────────
-async function tabExt(){
-  const d = await api('/api/ext');
-  main.innerHTML = `<div class="card"><h2>Browser extension</h2>
-    <p>Build dir: <code>${esc(d.build_dir)}</code> · built: ${d.built?'<span class="ok">yes</span>':'<span class="err">no — run <code>pnpm build</code> in extension/</span>'}</p>
-    <ol>${(d.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol></div>`;
-}
+window.setupPw = async ()=>{ try{ const r=await api('/api/desktop/playwright',{method:'POST'}); toast(r.message); refresh(); }catch(e){ toast(e.message,true);} };
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 async function tabSettings(){
@@ -162,18 +154,16 @@ async function tabSettings(){
     <label>LLM base URL</label><input id="s_base" type="text" value="${esc(c.llm_base)}" />
     <label>Distill model</label><input id="s_model" type="text" value="${esc(c.distill_model)}" />
     <label>Skills root (Claude Code install target)</label><input id="s_root" type="text" value="${esc(c.skills_root)}" />
-    <label><input id="s_auto" type="checkbox" ${c.auto_distill?'checked':''} style="width:auto;margin-right:6px"/> Auto-distill on finalize</label>
+    <label><input id="s_auto" type="checkbox" ${c.auto_distill?'checked':''} style="width:auto;margin-right:6px"/> Auto-process on finalize</label>
     <div class="row" style="margin-top:14px"><button class="act" onclick="saveSettings()">Save</button></div></div>`;
 }
 window.saveSettings = async ()=>{
-  const body = { llm_base:$('#s_base').value, distill_model:$('#s_model').value, skills_root:$('#s_root').value, auto_distill:$('#s_auto').checked };
-  const k = $('#s_key').value; if(k) body.llm_key = k;
-  try{ await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast('Saved'); refresh(); }
-  catch(e){ toast(e.message,true); }
-};
+  const body={llm_base:$('#s_base').value,distill_model:$('#s_model').value,skills_root:$('#s_root').value,auto_distill:$('#s_auto').checked};
+  const k=$('#s_key').value; if(k) body.llm_key=k;
+  try{ await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast('Saved'); refresh(); }catch(e){ toast(e.message,true);} };
 
 refresh();
-setInterval(pingServer, 8000);
+setInterval(pingServer,8000);
 </script>
 </body>
 </html>

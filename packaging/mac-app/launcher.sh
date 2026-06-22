@@ -83,25 +83,8 @@ else
   echo "[3/4] dependencies already installed."
 fi
 
-# Node.js — needed by the distiller. If the system has none, download an
-# isolated copy into the work dir (no system changes, native arch).
-if ! command -v node >/dev/null 2>&1; then
-  NV="v22.11.0"
-  NARCH=$([ "$ARM" = 1 ] && echo arm64 || echo x64)
-  NDIR="$WORK/node-$NV-darwin-$NARCH"
-  if [ ! -x "$NDIR/bin/node" ]; then
-    echo "[*] node not found — downloading Node $NV ($NARCH) into the app's private dir…"
-    if curl -fL# "https://nodejs.org/dist/$NV/node-$NV-darwin-$NARCH.tar.gz" -o "$WORK/node.tgz" \
-       && tar -xzf "$WORK/node.tgz" -C "$WORK"; then
-      rm -f "$WORK/node.tgz"
-    else
-      echo "[*] WARN: node download failed — distillation will be unavailable."
-      dialog "Could not download Node.js. Distillation needs it; install from nodejs.org, or check your network."
-    fi
-  fi
-  [ -x "$NDIR/bin/node" ] && export PATH="$NDIR/bin:$PATH"
-fi
-command -v node >/dev/null 2>&1 && echo "[*] node: $(node -v)  ($(command -v node))" || echo "[*] NOTE: node unavailable — recording/upload still work; distillation is disabled."
+# (The distillation harness is pure Python and runs in this same venv — no Node
+#  needed at runtime. The extension is prebuilt in the bundle.)
 
 echo "[4/4] launching server + opening the control panel in your browser…"
 echo "      panel → http://127.0.0.1:${JFL_PORT:-8099}/"

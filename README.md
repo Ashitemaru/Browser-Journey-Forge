@@ -1,32 +1,42 @@
 # Journey-Forge Local
 
-Record your own browser tasks → distill each into a reusable **"how to do task X
-on site Y"** skill → use it in **Claude Desktop** (and Claude Code). A
-single-user, local product. You bring your own LLM API key. Not related to any
-benchmark.
+Record your own browser tasks → each website accumulates a **bucket of
+capabilities**, and every capability distills into one reusable skill → use them
+in **Claude Desktop** (and Claude Code). A single-user, local product. You bring
+your own LLM API key. Pure Python at runtime (no Node needed). Not a benchmark.
 
 ```
 extension (record free-form task)
-   └─► localhost server  :8099   /v1/traces/init → chunks → finalize
+   └─► localhost server :8099   /v1/traces/init → chunks → finalize
           └─ assemble → data/traces/<id>/trace.json  (intent + events)
-          └─ background: distiller → SKILL.md → installer
-                 ├─ Claude Code:    ~/.claude/skills/<name>/SKILL.md   (auto)
+          └─ background harness pipeline:
+               atomize → classify (capability) → bucket (per domain+capability)
+               → distill bucket → SKILL.md + TRACE_GUIDE.md  → install
+                 ├─ Claude Code:    ~/.claude/skills/<domain>-<capability>/SKILL.md (auto)
                  └─ Claude Desktop: <name>.zip → upload via Settings → Skills
-   /v1/traces/<id>/status  exposes distill_result
+   /api/buckets  exposes per-site capability buckets + skills
 ```
+
+Each website is a folder of capability buckets, e.g.
+`github.com/{login-with-credentials, signup-with-email, …}` — a new recording is
+atomized into segments, each segment classified into a capability, and segments
+of the same capability pooled into one bucket that distills into one skill.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `entry/main.py` | Desktop entry — starts the server + opens a pywebview window |
+| `entry/main.py` | Desktop entry — starts the server, opens the panel in your browser |
 | `app/dist/index.html` | Control panel (zero-build, served by the server) |
 | `extension/` | The recorder (product fork: points at localhost, free-form only) |
 | `server/server.py` | Local ingestion + control API |
-| `distiller/distill.mjs` | One trace → generic operating-guide `SKILL.md` |
-| `installer/install-skill.mjs` | Frontmatter + double-track install (Code dir + Desktop `.zip`) |
+| `harness/` | Distillation pipeline: atomize / classify / bucket / distill / install (pure Python) |
+| `harness/main.py` | CLI: `ingest` / `distill` / `status` / `consolidate` / `query` |
 | `scripts/start.sh` | Headless dev launcher |
 | `docs/` | Trace schema + Claude Desktop setup |
+
+State lives under `data/harness/`: `buckets.json`, `registry.json`, and
+`skills/<domain>/<capability>/{SKILL.md,TRACE_GUIDE.md,meta.json,evidence.jsonl}`.
 
 ## Quick start
 
