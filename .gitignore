@@ -11,6 +11,10 @@ extension/.output/
 data/
 *.log
 
+# CI build output (assembled .app / zip)
+out/
+.pnpm-store/
+
 # python
 __pycache__/
 *.pyc
