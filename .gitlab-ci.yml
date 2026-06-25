@@ -1,7 +1,7 @@
 # Build the macOS app bundle (JourneyForgeLocal-mac.zip) on a Linux runner.
-# The .app is a pure-file wrapper (Info.plist + launcher + project + zip), so it
-# assembles anywhere — no macOS runner required. The artifact is downloadable
-# from the job page, and via a stable "latest" URL (see README of this job).
+# Node-only: no apt, no corepack, no zip/rsync — works on a minimal node:20
+# image and on shell runners alike. pnpm via npx (no global install / no root).
+# The .app is a pure-file wrapper, so it assembles anywhere — no macOS runner.
 
 stages: [build]
 
@@ -9,23 +9,25 @@ build-app:
   stage: build
   image: node:20-bookworm-slim
   variables:
-    PNPM_HOME: "$CI_PROJECT_DIR/.pnpm-store"
+    npm_config_cache: "$CI_PROJECT_DIR/.npm"
+    PNPM_STORE: "$CI_PROJECT_DIR/.pnpm-store"
   cache:
     key: pnpm-${CI_COMMIT_REF_SLUG}
     paths:
+      - .npm/
       - .pnpm-store/
       - extension/node_modules/
-  before_script:
-    - apt-get update && apt-get install -y --no-install-recommends zip rsync
-    - corepack enable && corepack prepare pnpm@9 --activate
-    - pnpm config set store-dir "$PNPM_HOME"
   script:
-    - echo "Building extension…"
-    - (cd extension && pnpm install --no-frozen-lockfile && pnpm build)
+    - node -v
+    - cd extension
+    - npx --yes pnpm@9 config set store-dir "$PNPM_STORE"
+    - npx --yes pnpm@9 install --no-frozen-lockfile
+    - npx --yes pnpm@9 run build
+    - cd ..
     - echo "Assembling macOS .app bundle…"
     - bash packaging/build-mac-app.sh "$CI_PROJECT_DIR/out"
     - ls -lh out/JourneyForgeLocal-mac.zip
-    - 'echo "Download this build: $CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/file/out/JourneyForgeLocal-mac.zip"'
+    - 'echo "Download: $CI_PROJECT_URL/-/jobs/$CI_JOB_ID/artifacts/file/out/JourneyForgeLocal-mac.zip"'
   artifacts:
     name: "JourneyForgeLocal-mac-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -34,4 +36,4 @@ build-app:
   rules:
     - if: '$CI_COMMIT_BRANCH == "master"'
     - if: '$CI_COMMIT_TAG'
-    - if: '$CI_PIPELINE_SOURCE == "web"'        # lets you trigger a build by hand
+    - if: '$CI_PIPELINE_SOURCE == "web"'
