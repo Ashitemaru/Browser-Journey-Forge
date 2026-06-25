@@ -36,6 +36,19 @@ echo "    sidecar → desktop/src-tauri/binaries/jfl-server-$TRIPLE"
 echo "[4/4] Building the Tauri app…"
 ( cd desktop && npm install && npm run tauri build )
 
+APP="desktop/src-tauri/target/release/bundle/macos/Journey-Forge Local.app"
+# Re-sign the PyInstaller sidecar with library-validation disabled, otherwise
+# its embedded Python.framework (a different Team ID) fails to load under the
+# hardened runtime. Then re-seal the bundle over the new sidecar signature.
+SIDECAR="$(/usr/bin/find "$APP/Contents" -type f -name 'jfl-server*' | head -1)"
+if [ -n "$SIDECAR" ]; then
+  echo "Re-signing sidecar with library-validation disabled: $SIDECAR"
+  codesign --force --options runtime \
+    --entitlements packaging/sidecar.entitlements --sign - "$SIDECAR"
+  codesign --force --sign - "$APP"
+  codesign --verify --deep --strict "$APP" && echo "codesign verify OK" || echo "WARN: codesign verify failed"
+fi
+
 echo
 echo "Done. The .app is under:"
-echo "  desktop/src-tauri/target/release/bundle/macos/Journey-Forge Local.app"
+echo "  $APP"
