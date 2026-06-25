@@ -169,18 +169,26 @@ def segment_trajectory(track: NormalizedTrack) -> list[Segment]:
     if prev < len(clean):
         raw_segments.append((prev, len(clean), "end_of_track"))
 
+    def _dom(s: int, e: int) -> str:
+        return _segment_domain(clean[s:e], "")
+
+    # Merge under-sized segments into the previous one — but NEVER across a
+    # domain boundary, or a tiny visit to site B would contaminate site A's
+    # bucket (and get mislabeled as A).
     merged: list[tuple[int, int, str]] = []
     for start, end, reason in raw_segments:
         seg_len = end - start
-        if seg_len < MIN_SEGMENT_EVENTS and merged:
+        if seg_len < MIN_SEGMENT_EVENTS and merged and _dom(merged[-1][0], merged[-1][1]) == _dom(start, end):
             prev_start, prev_end, prev_reason = merged[-1]
             merged[-1] = (prev_start, end, prev_reason)
-        elif seg_len < MIN_SEGMENT_EVENTS and not merged:
-            merged.append((start, end, reason))
         else:
             merged.append((start, end, reason))
 
-    if len(merged) > 1 and (merged[-1][1] - merged[-1][0]) < MIN_SEGMENT_EVENTS:
+    if (
+        len(merged) > 1
+        and (merged[-1][1] - merged[-1][0]) < MIN_SEGMENT_EVENTS
+        and _dom(merged[-1][0], merged[-1][1]) == _dom(merged[-2][0], merged[-2][1])
+    ):
         last = merged.pop()
         prev_start, prev_end, prev_reason = merged[-1]
         merged[-1] = (prev_start, last[1], prev_reason)
@@ -222,6 +230,20 @@ def _split_oversized(
     return chunks
 
 
+def _segment_domain(events: list[NormalizedEvent], fallback: str) -> str:
+    """The dominant registrable domain across a segment's own events.
+
+    A single recording can span several sites; each segment must be bucketed
+    under the site it actually happened on, not the whole trace's first domain.
+    """
+    counts: dict[str, int] = {}
+    for e in events:
+        rd = registered_domain(e.url)
+        if rd:
+            counts[rd] = counts.get(rd, 0) + 1
+    return max(counts, key=counts.get) if counts else fallback
+
+
 def _make_segment(
     track: NormalizedTrack,
     events: list[NormalizedEvent],
@@ -236,7 +258,7 @@ def _make_segment(
     return Segment(
         segment_id=f"{track.track_id}::{start}::{end}",
         source_track_id=track.track_id,
-        domain=track.domain,
+        domain=_segment_domain(events, track.domain),
         start_idx=start,
         end_idx=end,
         events=events,
