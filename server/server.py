@@ -403,8 +403,15 @@ def _apply_harness_config(cfg: dict) -> None:
     hconfig.LLM_KEY = cfg.get("llm_key", "")
     if cfg.get("llm_base"):
         hconfig.LLM_BASE = str(cfg["llm_base"]).rstrip("/")
-    if cfg.get("distill_model"):
-        hconfig.DISTILL_MODEL = cfg["distill_model"]
+    model = cfg.get("distill_model")
+    if model:
+        hconfig.DISTILL_MODEL = model
+        # Classification/consolidation default to Haiku, which a custom gateway
+        # may not serve. Use the user's configured model for those too unless a
+        # separate one is explicitly set — otherwise classify fails silently and
+        # you get 0 buckets despite a "done" pipeline.
+        hconfig.CLASSIFY_MODEL = cfg.get("classify_model") or model
+        hconfig.BUCKET_MODEL = cfg.get("bucket_model") or model
 
 
 def _ingest_distill_install(upload_id: str) -> None:
@@ -422,10 +429,17 @@ def _ingest_distill_install(upload_id: str) -> None:
             run_ingest_file(trace_json)
             run_distill()
             installed = install_registry(Path(cfg["skills_root"]))
+        n_buckets = len(_read_json_file(HARNESS_STATE / "buckets.json", {}).get("buckets", {}))
+        note = ""
+        if not installed:
+            note = ("No skills produced — likely the classify/distill LLM call failed "
+                    "(check the LLM key/base/model; a custom gateway may not serve the model).")
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "done"
-            meta["distill_result"] = {"ok": True, "installed_count": len(installed)}
-        logger.info("[pipeline] %s: ok, %d skill(s) installed", upload_id, len(installed))
+            meta["distill_result"] = {"ok": True, "installed_count": len(installed),
+                                      "buckets": n_buckets, "note": note}
+        logger.info("[pipeline] %s: ok, %d skill(s), %d bucket(s)%s",
+                    upload_id, len(installed), n_buckets, f" — {note}" if note else "")
     except Exception as e:  # noqa: BLE001
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "error"
