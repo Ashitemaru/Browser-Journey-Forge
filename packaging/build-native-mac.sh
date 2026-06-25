@@ -9,7 +9,7 @@ cd "$REPO"
 PYBIN="${PYTHON:-python3}"
 
 echo "[1/4] Building the extension…"
-( cd extension && pnpm install --no-frozen-lockfile && pnpm build )
+( cd extension && npx --yes pnpm@9 install --no-frozen-lockfile && npx --yes pnpm@9 run build )
 
 echo "[2/4] Python build venv + PyInstaller…"
 "$PYBIN" -m venv .build-venv
