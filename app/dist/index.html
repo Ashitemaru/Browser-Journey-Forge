@@ -169,13 +169,21 @@ async function tabSettings(){
     <label>LLM API key ${c.llm_key_set?'<span class="ok">(set)</span>':'<span class="err">(not set — distillation will fail)</span>'}</label>
     <input id="s_key" type="password" placeholder="sk-ant-… (leave blank to keep current)" />
     <label>LLM base URL</label><input id="s_base" type="text" value="${esc(c.llm_base)}" />
-    <label>Distill model</label><input id="s_model" type="text" value="${esc(c.distill_model)}" />
+    <label>Distill model (writes the skill)</label><input id="s_model" type="text" value="${esc(c.distill_model)}" />
+    <label>Classify model (per-segment; blank = same as distill model)</label><input id="s_classify" type="text" value="${esc(c.classify_model||'')}" placeholder="blank = use distill model" />
+    <label>Min bucket size (segments needed before a capability distills)</label><input id="s_minbucket" type="text" value="${esc(c.min_bucket_size||1)}" />
     <label>Skills root (Claude Code install target)</label><input id="s_root" type="text" value="${esc(c.skills_root)}" />
     <label><input id="s_auto" type="checkbox" ${c.auto_distill?'checked':''} style="width:auto;margin-right:6px"/> Auto-process on finalize</label>
+    <label><input id="s_insecure" type="checkbox" ${c.llm_insecure?'checked':''} style="width:auto;margin-right:6px"/> Allow insecure TLS (self-signed / corporate-proxy LLM endpoint)</label>
     <div class="row" style="margin-top:14px"><button class="act" onclick="saveSettings()">Save</button></div></div>`;
 }
 window.saveSettings = async ()=>{
-  const body={llm_base:$('#s_base').value,distill_model:$('#s_model').value,skills_root:$('#s_root').value,auto_distill:$('#s_auto').checked};
+  const body={
+    llm_base:$('#s_base').value, distill_model:$('#s_model').value,
+    classify_model:$('#s_classify').value, skills_root:$('#s_root').value,
+    auto_distill:$('#s_auto').checked, llm_insecure:$('#s_insecure').checked,
+    min_bucket_size:parseInt($('#s_minbucket').value,10)||1,
+  };
   const k=$('#s_key').value; if(k) body.llm_key=k;
   try{ await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast('Saved'); refresh(); }catch(e){ toast(e.message,true);} };
 

@@ -92,6 +92,14 @@ def _default_config() -> dict:
         "llm_key": os.environ.get("SF_LLM_KEY", ""),
         "llm_base": os.environ.get("SF_LLM_BASE", "https://api.anthropic.com"),
         "distill_model": os.environ.get("SF_DISTILL_MODEL", "claude-opus-4-8"),
+        # The model used for the cheap per-segment classification + bucket
+        # consolidation. Blank → reuse distill_model (a custom gateway may not
+        # serve a separate Haiku-class model).
+        "classify_model": os.environ.get("SF_CLASSIFY_MODEL", ""),
+        # Skip TLS verification for self-signed / corporate-MITM LLM endpoints.
+        "llm_insecure": os.environ.get("SF_LLM_INSECURE", "").lower() in ("1", "true", "yes"),
+        # A capability bucket distills once it has at least this many segments.
+        "min_bucket_size": int(os.environ.get("SF_MIN_BUCKET_SIZE", "1")),
         # global ~/.claude/skills  OR  an absolute project path's .claude/skills
         # (empty env value falls back to the global default)
         "skills_root": os.environ.get("JFL_SKILLS_ROOT") or str(Path.home() / ".claude" / "skills"),
@@ -403,15 +411,17 @@ def _apply_harness_config(cfg: dict) -> None:
     hconfig.LLM_KEY = cfg.get("llm_key", "")
     if cfg.get("llm_base"):
         hconfig.LLM_BASE = str(cfg["llm_base"]).rstrip("/")
+    hconfig.LLM_INSECURE = bool(cfg.get("llm_insecure"))
+    hconfig.MIN_BUCKET_SIZE = int(cfg.get("min_bucket_size") or 1)
     model = cfg.get("distill_model")
     if model:
         hconfig.DISTILL_MODEL = model
-        # Classification/consolidation default to Haiku, which a custom gateway
-        # may not serve. Use the user's configured model for those too unless a
-        # separate one is explicitly set — otherwise classify fails silently and
-        # you get 0 buckets despite a "done" pipeline.
-        hconfig.CLASSIFY_MODEL = cfg.get("classify_model") or model
-        hconfig.BUCKET_MODEL = cfg.get("bucket_model") or model
+    # Classify/consolidate use the configured classify_model, or fall back to the
+    # distill model (no hidden Haiku default a custom gateway might not serve).
+    classify = cfg.get("classify_model") or model
+    if classify:
+        hconfig.CLASSIFY_MODEL = classify
+        hconfig.BUCKET_MODEL = classify
 
 
 def _ingest_distill_install(upload_id: str) -> None:
@@ -614,9 +624,17 @@ async def api_config_put(request: Request, authorization: str = Header(None)):
     _check_auth(authorization)
     body = await request.json()
     cfg = _load_config()
-    for k in ("llm_base", "distill_model", "skills_root", "auto_distill"):
+    for k in ("llm_base", "distill_model", "classify_model", "skills_root"):
         if k in body:
             cfg[k] = body[k]
+    for k in ("auto_distill", "llm_insecure"):
+        if k in body:
+            cfg[k] = bool(body[k])
+    if "min_bucket_size" in body:
+        try:
+            cfg["min_bucket_size"] = max(1, int(body["min_bucket_size"]))
+        except (TypeError, ValueError):
+            pass
     if body.get("llm_key"):  # only overwrite when a non-empty key is sent
         cfg["llm_key"] = body["llm_key"]
     _save_config(cfg)

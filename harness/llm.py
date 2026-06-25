@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import time
 import urllib.error
 import urllib.request
@@ -21,10 +22,18 @@ def _is_anthropic(base: str) -> bool:
     return "anthropic.com" in base
 
 
+def _ssl_context():
+    # Self-signed / corporate-MITM endpoints fail default verification. When the
+    # user opts in (llm_insecure), skip TLS verification for the LLM call.
+    if config.LLM_INSECURE:
+        return ssl._create_unverified_context()  # noqa: S323
+    return None
+
+
 def _http_post(url: str, headers: dict, body: dict, timeout: float) -> dict:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:  # noqa: S310
         return json.loads(resp.read().decode("utf-8"))
 
 

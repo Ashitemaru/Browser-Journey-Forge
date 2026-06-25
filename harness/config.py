@@ -21,6 +21,8 @@ TRACKS_DIR: Path = DATA_DIR / "traces"
 # LLM — defaults to the Anthropic Messages API with the user's own key.
 LLM_BASE: str = os.environ.get("SF_LLM_BASE", "https://api.anthropic.com").rstrip("/")
 LLM_KEY: str = os.environ.get("SF_LLM_KEY", "")
+# Allow self-signed / corporate-MITM LLM endpoints (skip TLS verification).
+LLM_INSECURE: bool = os.environ.get("SF_LLM_INSECURE", "").lower() in ("1", "true", "yes")
 DISTILL_MODEL: str = os.environ.get("SF_DISTILL_MODEL", "claude-opus-4-8")
 # Classification/consolidation are cheap, high-volume calls — default to Haiku.
 CLASSIFY_MODEL: str = os.environ.get("SF_CLASSIFY_MODEL", "claude-haiku-4-5")
