@@ -23,3 +23,12 @@ __pycache__/
 .DS_Store
 *.swp
 .npm/
+
+# native app build (Tauri + PyInstaller)
+/build/
+/dist/
+.build-venv/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/

@@ -63,8 +63,9 @@ HARNESS_STATE = DATA_DIR / "harness"                   # pipeline state: buckets
 API_KEYS_FILE = DATA_DIR / "api-keys.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 
-APP_BUILD = REPO / "app" / "dist"                      # control-panel SPA build
-EXT_BUILD = REPO / "extension" / "dist" / "chrome-mv3"  # wxt build output
+# Overridable so a frozen/native bundle can point at its bundled resources.
+APP_BUILD = Path(os.environ.get("JFL_APP_BUILD", str(REPO / "app" / "dist")))           # control-panel SPA
+EXT_BUILD = Path(os.environ.get("JFL_EXT_BUILD", str(REPO / "extension" / "dist" / "chrome-mv3")))  # wxt build
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
