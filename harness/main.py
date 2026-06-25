@@ -304,6 +304,15 @@ def cmd_full(args: argparse.Namespace) -> None:
     cmd_distill(args)
 
 
+# ── In-process entry points (used by the server / a frozen app, no subprocess) ─
+def run_ingest_file(track_file) -> None:
+    cmd_ingest(argparse.Namespace(track_file=str(track_file), tracks_dir=None))
+
+
+def run_distill(force: bool = False) -> None:
+    cmd_distill(argparse.Namespace(bucket=None, force=force))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Distributed multi-trajectory to multi-skill distillation"

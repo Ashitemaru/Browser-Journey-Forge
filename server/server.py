@@ -391,27 +391,19 @@ def _assemble_trace(upload_id: str, meta: dict) -> list[dict]:
 
 
 # ── Distillation pipeline (harness: atomize → classify → bucket → distill) ────
-def _harness_env(cfg: dict) -> dict:
-    env = dict(os.environ)
-    env["JFL_DATA_DIR"] = str(DATA_DIR)
-    env["PYTHONPATH"] = str(REPO) + os.pathsep + env.get("PYTHONPATH", "")
-    env["SF_LLM_KEY"] = cfg.get("llm_key", "")
-    env["SF_LLM_BASE"] = cfg.get("llm_base", "")
-    env["SF_DISTILL_MODEL"] = cfg.get("distill_model", "")
-    return env
+# Runs IN-PROCESS (no subprocess), so it works when the whole thing is frozen
+# into a single binary (PyInstaller sidecar / native app). Serialized by a lock
+# so concurrent finalizes don't race on buckets.json.
+_PIPELINE_LOCK = threading.Lock()
 
 
-def _run_harness(args: list[str], cfg: dict, timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, "-m", "harness.main", *args],
-        cwd=str(REPO), capture_output=True, text=True, env=_harness_env(cfg), timeout=timeout,
-    )
-
-
-def _install_all(cfg: dict) -> list[dict]:
-    """Install every distilled bucket skill into the chosen skills root (Code + Desktop zip)."""
-    from harness.install import install_registry
-    return install_registry(Path(cfg["skills_root"]))
+def _apply_harness_config(cfg: dict) -> None:
+    from harness import config as hconfig
+    hconfig.LLM_KEY = cfg.get("llm_key", "")
+    if cfg.get("llm_base"):
+        hconfig.LLM_BASE = str(cfg["llm_base"]).rstrip("/")
+    if cfg.get("distill_model"):
+        hconfig.DISTILL_MODEL = cfg["distill_model"]
 
 
 def _ingest_distill_install(upload_id: str) -> None:
@@ -420,21 +412,18 @@ def _ingest_distill_install(upload_id: str) -> None:
     try:
         if not cfg.get("llm_key"):
             raise RuntimeError("no LLM API key configured (set it in Settings)")
+        from harness.main import run_distill, run_ingest_file
+        from harness.install import install_registry
+
         trace_json = _trace_dir(upload_id) / "trace.json"
-        r1 = _run_harness(["ingest", "--track-file", str(trace_json)], cfg, 600)
-        if r1.returncode != 0:
-            raise RuntimeError(f"ingest failed: {(r1.stderr or r1.stdout)[-1500:]}")
-        r2 = _run_harness(["distill"], cfg, 1200)
-        if r2.returncode != 0:
-            raise RuntimeError(f"distill failed: {(r2.stderr or r2.stdout)[-1500:]}")
-        installed = _install_all(cfg)
+        with _PIPELINE_LOCK:
+            _apply_harness_config(cfg)
+            run_ingest_file(trace_json)
+            run_distill()
+            installed = install_registry(Path(cfg["skills_root"]))
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "done"
-            meta["distill_result"] = {
-                "ok": True, "installed_count": len(installed),
-                "ingest_log": (r1.stdout or "")[-1500:],
-                "distill_log": (r2.stdout or "")[-1500:],
-            }
+            meta["distill_result"] = {"ok": True, "installed_count": len(installed)}
         logger.info("[pipeline] %s: ok, %d skill(s) installed", upload_id, len(installed))
     except Exception as e:  # noqa: BLE001
         with update_meta(upload_id) as meta:
