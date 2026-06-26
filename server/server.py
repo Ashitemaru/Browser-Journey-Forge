@@ -946,6 +946,54 @@ def api_desktop_playwright(authorization: str = Header(None)):
     }
 
 
+@app.post("/api/desktop/mcp")
+async def api_desktop_mcp(request: Request, authorization: str = Header(None)):
+    """Declaratively set which of our MCP servers Claude Desktop has enabled.
+
+    Body: {"playwright": bool, "skills": bool}. Each is independent — the panel
+    exposes one toggle per server. Playwright needs Node; the skills server does
+    not (it's the frozen sidecar itself). Backs up the config before writing."""
+    _check_auth(authorization)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    want_pw = bool(body.get("playwright"))
+    want_skills = bool(body.get("skills"))
+    if want_pw:
+        npx, _ = _find_npx()
+        if not npx:
+            raise HTTPException(400, "Node.js / npx not found — install it first (Install Node)")
+    cfg_path = _claude_desktop_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if cfg_path.exists():
+        try:
+            data = json.loads(cfg_path.read_text())
+        except json.JSONDecodeError:
+            raise HTTPException(422, f"{cfg_path} is not valid JSON; fix or remove it first")
+        shutil.copy2(cfg_path, cfg_path.with_suffix(cfg_path.suffix + ".jfl.bak"))
+    servers = data.setdefault("mcpServers", {})
+    if want_pw:
+        servers["playwright"] = _playwright_entry()
+    else:
+        servers.pop("playwright", None)
+    if want_skills:
+        servers["journey-forge-skills"] = _skill_mcp_entry()
+    else:
+        servers.pop("journey-forge-skills", None)
+    _atomic_write(cfg_path, json.dumps(data, indent=2, ensure_ascii=False))
+    logger.info("[desktop] MCP set playwright=%s skills=%s in %s", want_pw, want_skills, cfg_path)
+    return {
+        "ok": True,
+        "playwright": want_pw,
+        "skills": want_skills,
+        "config_path": str(cfg_path),
+        "restart_required": True,
+        "message": "Updated Claude Desktop MCP servers. Restart Claude Desktop once to apply.",
+    }
+
+
 @app.post("/api/desktop/disconnect")
 def api_desktop_disconnect(authorization: str = Header(None)):
     """Remove our MCP servers (playwright + journey-forge-skills) from Claude

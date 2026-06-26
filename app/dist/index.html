@@ -194,36 +194,40 @@ window.saveSettings = async ()=>{
   const k=$('#s_key').value; if(k) body.llm_key=k;
   try{ await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); toast('Saved'); renderLlmSettings(); }catch(e){ toast(e.message,true);} };
 
-// ── Claude Desktop connection (toggle, incl. Node/npx check) ──────────────────
+// ── Claude Desktop connection (independent toggles, incl. Node/npx check) ─────
 async function renderDesktop(){
   let d; try{ d = await api('/api/desktop/config'); }
   catch(e){ $('#cfg_desktop').innerHTML=`<h2>Claude Desktop</h2><span class="err">${esc(e.message)}</span>`; return; }
-  const connected = d.playwright_configured && d.skills_mcp_configured;
+  const pw = !!d.playwright_configured, sk = !!d.skills_mcp_configured;
   const nodeRow = d.node_found
     ? `<span class="ok">Node ${esc(d.node_version||'')}</span> · <code>${esc(d.npx_path||'')}</code>`
-    : `<span class="err">Node / npx not found</span> — required to drive the browser`;
+    : `<span class="err">Node / npx not found</span> — required for browser control (Playwright)`;
   const nodeBtn = d.node_found ? '' : `<button class="act" onclick="installNode()">Install Node (one-click)</button>`;
-  // Toggle is disabled when Node is missing AND not yet connected (can't enable).
-  const canToggle = d.node_found || connected;
+  // Playwright needs Node; the skills server is our own binary, so it can be
+  // toggled regardless. Each toggle sets the desired state of BOTH servers.
+  const pwToggleable = d.node_found || pw;
   $('#cfg_desktop').innerHTML = `<h2>Claude Desktop connection</h2>
-    <p class="mut">Connect so Claude Desktop can drive the browser (Playwright) and pull your distilled skills live via the <code>get_skill</code> tool. Records still work without this — it only affects execution.</p>
+    <p class="mut">Two independent integrations. Records still work without either — these only affect execution in Claude Desktop. <b>Restart Claude Desktop once</b> after changing a toggle.</p>
     <p><b>Node:</b> ${nodeRow}</p>
     ${nodeBtn?`<div class="row" style="margin:6px 0">${nodeBtn}</div>`:''}
     <div class="toggle-row">
-      <label class="sw"><input type="checkbox" id="s_mcp" ${connected?'checked':''} ${canToggle?'':'disabled'} onchange="toggleMcp(this.checked)"><span class="sl"></span></label>
-      <div><b>${connected?'Connected':'Not connected'}</b>
-        <div class="mut" style="font-size:11px">Playwright: ${d.playwright_configured?'<span class="ok">on</span>':'off'} · Skills MCP: ${d.skills_mcp_configured?'<span class="ok">on</span>':'off'}</div></div>
+      <label class="sw"><input type="checkbox" ${pw?'checked':''} ${pwToggleable?'':'disabled'} onchange="setMcp(this.checked, ${sk})"><span class="sl"></span></label>
+      <div><b>Browser control (Playwright MCP)</b> ${pw?'<span class="ok">on</span>':'<span class="mut">off</span>'}
+        <div class="mut" style="font-size:11px">Lets Claude Desktop click / type / navigate in a browser.</div></div>
+    </div>
+    <div class="toggle-row">
+      <label class="sw"><input type="checkbox" ${sk?'checked':''} onchange="setMcp(${pw}, this.checked)"><span class="sl"></span></label>
+      <div><b>Distilled skills (get_skill MCP)</b> ${sk?'<span class="ok">on</span>':'<span class="mut">off</span>'}
+        <div class="mut" style="font-size:11px">Lets a chat pull your distilled skills live — record → auto-distill → available with no restart.</div></div>
     </div>
     <p class="mut" style="font-size:12px">Config: <code>${esc(d.config_path)}</code></p>
-    <p class="mut" style="font-size:12px"><b>Restart Claude Desktop once</b> after toggling. After that, new skills you record are served live — no further restarts. Test: “call get_skill for google flights, then …”.</p>
+    <p class="mut" style="font-size:12px">Test in a chat: “call get_skill for google flights, then use playwright to …”.</p>
     <details style="margin-top:8px"><summary class="mut">Manual snippet</summary><pre>${esc(JSON.stringify(d.snippet,null,2))}</pre></details>`;
 }
 window.installNode = async ()=>{ toast('Downloading Node… (~30s)'); try{ const r=await api('/api/desktop/install-node',{method:'POST'}); toast('Node ready: '+(r.version||r.npx)); renderDesktop(); }catch(e){ toast(e.message,true);} };
-window.toggleMcp = async (on)=>{
-  try{
-    if(on){ const r=await api('/api/desktop/playwright',{method:'POST'}); toast(r.message); }
-    else { const r=await api('/api/desktop/disconnect',{method:'POST'}); toast(r.message); }
-  }catch(e){ toast(e.message,true); }
+window.setMcp = async (playwright, skills)=>{
+  try{ const r=await api('/api/desktop/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playwright,skills})}); toast(r.message); }
+  catch(e){ toast(e.message,true); }
   renderDesktop();
 };
 
