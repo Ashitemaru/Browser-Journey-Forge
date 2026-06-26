@@ -4,10 +4,10 @@ Standard path: CI publishes a signed macOS bundle + `latest.json` to a GitHub
 Release; the app's Tauri updater polls that, verifies the signature with a baked-in
 public key, then downloads / installs / relaunches.
 
-The **client-side** code changes below are intentionally NOT applied yet — they
-touch Rust (`Cargo.toml`, `main.rs`) which can't be compiled in this dev box, and
-enabling them on the current GitLab pipeline risks breaking the working build.
-Apply them as part of the GitHub migration, then iterate live in Actions.
+Status: the **client-side** changes below are now APPLIED (Cargo/main.rs/
+tauri.conf.json/capabilities), targeting `github.com/Ashitemaru/Browser-Journey-
+Forge`. They compile on the GitHub `build` workflow (push-triggered). What
+remains: add the signing secret and verify the first tagged release.
 
 ## Keys (already generated — `.updater-keys/`)
 - **Public key** → goes in `tauri.conf.json` (below).

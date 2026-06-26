@@ -1,0 +1,31 @@
+# Build the native macOS app on every push (parity with the old GitLab job).
+# Produces a downloadable .dmg artifact and, importantly, compiles the Rust
+# shell — so the updater wiring is validated before we cut a tagged release.
+
+name: build
+
+on:
+  push:
+    branches: ["master", "main"]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build native app (.dmg)
+        run: bash packaging/build-native-mac.sh
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: JourneyForgeLocal-native-${{ github.sha }}
+          path: desktop/src-tauri/target/release/bundle/macos/JourneyForgeLocal-native-mac.dmg
+          if-no-files-found: error

@@ -9,6 +9,7 @@ use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_updater::UpdaterExt;
 
 const PANEL_URL: &str = "http://127.0.0.1:8099/";
 const ADDR: &str = "127.0.0.1:8099";
@@ -16,7 +17,22 @@ const ADDR: &str = "127.0.0.1:8099";
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // 0. On launch, check GitHub Releases for a newer version; if found,
+            //    download + install + relaunch. Errors (no release / offline)
+            //    are ignored so this is a no-op when there's nothing to update.
+            let upd = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(updater) = upd.updater() {
+                    if let Ok(Some(update)) = updater.check().await {
+                        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+                            upd.restart();
+                        }
+                    }
+                }
+            });
+
             // 1. Spawn the sidecar (binaries/jfl-server-<target-triple>).
             let sidecar = app.shell().sidecar("jfl-server")?;
             let (mut rx, child) = sidecar.spawn()?;
