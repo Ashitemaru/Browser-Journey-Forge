@@ -35,6 +35,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Stamp build version
+        # tauri-action runs `tauri build` directly (not build-native-mac.sh), so
+        # stamp app/dist/build.json here — it gets bundled into the sidecar by the
+        # freeze step's --add-data and shown by the panel's "build" badge.
+        run: |
+          mkdir -p app/dist
+          printf '{"sha":"%s"}\n' "${{ github.ref_name }}" > app/dist/build.json
+
       - name: Build extension
         working-directory: extension
         run: |
