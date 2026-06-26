@@ -195,7 +195,7 @@ export function PopupApp() {
             <CardContent>
               <div className="jf-rec-top">
                 <span className="jf-muted">Recording</span>
-                <Badge tone="danger">LIVE</Badge>
+                <Badge tone="danger">Live</Badge>
               </div>
               <div className="jf-stat-row">
                 <div className="jf-stat">
@@ -221,7 +221,7 @@ export function PopupApp() {
             <CardContent>
               <div className="jf-rec-top">
                 <span className="jf-muted">Recording saved</span>
-                <Badge tone="success">READY</Badge>
+                <Badge tone="success">Ready</Badge>
               </div>
               <div className="jf-summary-grid">
                 <div className="jf-stat">

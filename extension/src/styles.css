@@ -54,7 +54,7 @@ p {
   height: 30px;
   padding: 0 13px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 10px;
   background: transparent;
   color: var(--fg);
   font-size: 12px;
@@ -79,14 +79,14 @@ p {
 }
 
 .ui-button-primary {
-  border-color: var(--acc);
-  background: var(--acc);
-  color: #ffffff;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--fg);
 }
 
 .ui-button-primary:hover:not(:disabled) {
-  border-color: #6f9bff;
-  background: #6f9bff;
+  border-color: var(--mut);
+  background: #1f2430;
 }
 
 .ui-button-danger {
@@ -109,7 +109,7 @@ p {
   width: 100%;
   height: 32px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 10px;
   padding: 0 10px;
   background: #0d0f14;
   color: var(--fg);
@@ -129,7 +129,7 @@ p {
 
 .ui-card {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--panel);
 }
 
@@ -189,7 +189,7 @@ p {
   display: grid;
   gap: 4px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 10px 12px;
   background: var(--panel);
   color: var(--mut);
@@ -296,7 +296,7 @@ p {
   display: grid;
   gap: 2px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 12px;
   padding: 10px;
   background: #0d0f14;
 }

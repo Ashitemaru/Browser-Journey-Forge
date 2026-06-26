@@ -33,9 +33,10 @@
   .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.run{color:var(--warn);border-color:var(--warn)}
   .pill.err{color:var(--err);border-color:var(--err)} .pill.mut{color:var(--mut)}
   .cap{font-weight:600} .desc{color:var(--mut);font-size:12px;margin-top:2px}
-  button.act,button.ghost,button.danger{height:30px;padding:0 13px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;line-height:1;white-space:nowrap}
-  button.act{background:var(--acc);border:1px solid var(--acc);color:#fff}
-  button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
+  button.act,button.ghost,button.danger{height:30px;padding:0 13px;border-radius:9px;cursor:pointer;font-size:12px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;line-height:1;white-space:nowrap}
+  /* All buttons share the quiet outlined look (no loud filled accent). */
+  button.act,button.ghost{background:none;border:1px solid var(--line);color:var(--fg)}
+  button.act:hover,button.ghost:hover{border-color:var(--mut)}
   button.danger{background:none;border:1px solid var(--err);color:var(--err)}
   button:disabled{opacity:.45;cursor:default}
   label{display:block;color:var(--mut);font-size:12px;margin:10px 0 4px}
@@ -70,8 +71,8 @@
 <header>
   <div class="inner">
     <h1>Journey Forge&nbsp;Local</h1>
-    <span class="pill mut" id="srv">checking…</span>
-    <span class="pill mut" id="ver" title="running build">build …</span>
+    <span class="pill mut" id="srv">Checking…</span>
+    <span class="pill mut" id="ver" title="running build">Build …</span>
   </div>
 </header>
 <nav>
@@ -101,15 +102,16 @@ async function api(path, opts){
 }
 let toastT; function toast(m,err){const t=$('#toast');t.textContent=m;t.style.borderLeftColor=err?'var(--err)':'var(--acc)';t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),3500);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-function pill(s){const m={accepted:'ok',done:'ok',running:'run',processing:'run',error:'err',degraded:'err'};return `<span class="pill ${m[s]||'mut'}">${esc(s||'-')}</span>`;}
+function cap(s){s=String(s==null?'':s);return s?s.charAt(0).toUpperCase()+s.slice(1):s;}
+function pill(s){const m={accepted:'ok',done:'ok',running:'run',processing:'run',error:'err',degraded:'err'};return `<span class="pill ${m[s]||'mut'}">${esc(cap(s)||'-')}</span>`;}
 function openModal(title,body){$('#m-title').textContent=title;$('#m-body').textContent=body;$('#overlay').classList.add('show');}
 function closeModal(){$('#overlay').classList.remove('show');}
 $('#overlay').addEventListener('click',e=>{if(e.target===$('#overlay'))closeModal();});
 
 let TAB='skills';
 document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{TAB=b.dataset.tab;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));refresh();}));
-async function pingServer(){try{await fetch('/');$('#srv').textContent='server online';$('#srv').className='pill ok';}catch{$('#srv').textContent='server offline';$('#srv').className='pill err';}}
-async function showVersion(){try{const r=await fetch('/api/version');const v=await r.json();$('#ver').textContent='build '+(v.sha||'?');}catch{$('#ver').textContent='build ?';}}
+async function pingServer(){try{await fetch('/');$('#srv').textContent='Server online';$('#srv').className='pill ok';}catch{$('#srv').textContent='Server offline';$('#srv').className='pill err';}}
+async function showVersion(){try{const r=await fetch('/api/version');const v=await r.json();$('#ver').textContent='Build '+(v.sha||'?');}catch{$('#ver').textContent='Build ?';}}
 async function refresh(){pingServer();try{await ({skills:tabSkills,settings:tabSettings}[TAB])();}catch(e){main.innerHTML=`<div class="card"><span class="err">${esc(e.message)}</span><p class="mut">If this is an auth error, set the server key in Settings.</p></div>`;}}
 
 // ── Skills & trajectories (combined preview) ─────────────────────────────────
@@ -122,18 +124,18 @@ function bucketsSection(d){
   if(!d.domains.length) return `<div class="card"><h2>Distilled skills</h2><p class="mut">No skills yet. Record a task with the extension — it distills automatically, and each capability becomes a skill under its website.</p></div>`;
   const sites = d.domains.map(site=>{
     const rows = site.buckets.map(b=>{
-      const status = b.distilled ? `<span class="pill ok">distilled v${b.version}</span>` : `<span class="pill run">pending</span>`;
+      const status = b.distilled ? `<span class="pill ok">Distilled v${b.version}</span>` : `<span class="pill run">Pending</span>`;
       const acts = b.distilled
         ? `<button class="ghost" onclick="viewSkill('${esc(b.bucket_id)}')">View SKILL.md</button>`
         : `<button class="ghost" disabled>View SKILL.md</button>`;
       return `<tr>
         <td><div class="cap">${esc(b.capacity)}</div><div class="desc">${esc(b.description||b.scope||'')}</div>
             ${b.skill_name?`<div class="meta">Installed: ${esc(b.skill_name)}</div>`:''}</td>
-        <td style="text-align:center">${b.segments}</td><td>${status}</td><td>${acts}</td></tr>`;
+        <td style="text-align:center">${b.segments}</td><td style="text-align:center">${status}</td><td>${acts}</td></tr>`;
     }).join('');
     return `<div class="site"><h3><span class="dom">${esc(site.domain||'(unknown site)')}</span>
         <span class="pill mut">${site.buckets.length} capabilit${site.buckets.length===1?'y':'ies'}</span></h3>
-      <table><thead><tr><th>Capability</th><th style="width:90px;text-align:center">Segments</th><th style="width:130px">Status</th><th style="width:160px"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table><thead><tr><th>Capability</th><th style="width:90px;text-align:center">Segments</th><th style="width:130px;text-align:center">Status</th><th style="width:160px"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join('');
   return `<div class="card"><h2>Distilled skills</h2>
     <p class="mut">Each website accumulates a bucket of capabilities. Every recorded task is atomized into segments, classified into a capability, and distilled into one reusable skill per capability.</p>
@@ -243,7 +245,7 @@ function agentBlock(title, d, kind){
     </div>
     <div class="toggle-row">
       <label class="sw"><input type="checkbox" ${sk?'checked':''} onchange="${fn}(${pw}, this.checked)"><span class="sl"></span></label>
-      <div>Distilled skills (get_skill MCP) ${sk?'<span class="ok">on</span>':'<span class="mut">off</span>'}</div>
+      <div>Distilled skills (<code>get_skill</code> MCP) ${sk?'<span class="ok">on</span>':'<span class="mut">off</span>'}</div>
     </div>
     <p class="meta">Config: <code>${esc(d.config_path)}</code>${d.config_exists===false?' (will be created)':''}</p>`;
 }
@@ -261,7 +263,7 @@ async function renderAgents(){
     : `<span class="err">Node / npx not found</span> — required for browser control (Playwright)`;
   const nodeBtn = nodeFound ? '' : `<button class="act" onclick="installNode()">Install Node (one-click)</button>`;
   el.innerHTML = `<h2>Agent connections</h2>
-    <p class="mut">Let an agent drive the browser (Playwright) and pull your distilled skills (get_skill). Recording works without this — it only affects execution. Restart the agent once after changing a toggle.</p>
+    <p class="mut">Let an agent drive the browser (Playwright) and pull your distilled skills (<code>get_skill</code>). Recording works without this — it only affects execution. Restart the agent once after changing a toggle.</p>
     <p class="meta">Node: ${nodeRow}</p>
     ${nodeBtn?`<div class="row" style="margin:6px 0">${nodeBtn}</div>`:''}
     ${agentBlock('Claude Desktop', cd, 'claude')}
@@ -283,14 +285,15 @@ window.setCodexMcp = async (playwright, skills)=>{
 async function renderExtension(){
   let d; try{ d = await api('/api/ext'); }
   catch(e){ $('#cfg_ext').innerHTML=`<h2>Extension</h2><span class="err">${esc(e.message)}</span>`; return; }
-  const steps = (d.steps||[]).map(s=>{
-    const btn = s.action==='open'
-      ? ` <button class="act" onclick="extOpen()">Open Chrome + reveal folder</button>` : '';
-    return `<li style="margin:7px 0">${esc(s.text)}${btn}</li>`;
-  }).join('');
   $('#cfg_ext').innerHTML = `<h2>Browser extension (the recorder)</h2>
-    <p class="mut">Until it's on the Chrome Web Store, loading is a one-time "Load unpacked". Follow these in order — each step's button is right next to it.</p>
-    <ol style="padding-left:20px;margin:8px 0">${steps}</ol>
+    <p class="mut">Until it is on the Chrome Web Store, loading is a quick one-time setup.</p>
+    <div class="row" style="margin:10px 0"><button class="ghost" onclick="extOpen()">Open Chrome + reveal folder</button></div>
+    <p class="mut">Then, in Chrome:</p>
+    <ol style="padding-left:20px;margin:6px 0">
+      <li style="margin:7px 0">Turn on <b>Developer mode</b> (toggle, top-right).</li>
+      <li style="margin:7px 0">Click <b>Load unpacked</b> and choose the folder that was just revealed.</li>
+      <li style="margin:7px 0">Done — the extension auto-connects to this app.</li>
+    </ol>
     <p class="meta">Folder: <code>${esc(d.build_dir)}</code> · ${d.built?'<span class="ok">ready</span>':'<span class="err">missing</span>'}</p>`;
 }
 window.extOpen = async ()=>{ try{ await api('/api/ext/open',{method:'POST'}); toast('Opened chrome://extensions and revealed the folder — turn on Developer mode, then Load unpacked.'); }catch(e){ toast(e.message,true);} };
