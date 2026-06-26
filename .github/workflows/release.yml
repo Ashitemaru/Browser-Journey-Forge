@@ -61,24 +61,30 @@ jobs:
           TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
           mkdir -p desktop/src-tauri/binaries
           cp dist/jfl-server "desktop/src-tauri/binaries/jfl-server-$TRIPLE"
-          # Pre-sign the sidecar with library-validation disabled so the bundled
-          # (and updater-packaged) app can load its embedded Python.framework.
-          codesign --force --options runtime \
-            --entitlements packaging/sidecar.entitlements --sign - \
-            "desktop/src-tauri/binaries/jfl-server-$TRIPLE"
+          # No ad-hoc pre-sign here: tauri-action signs the whole bundle (incl.
+          # this sidecar) with the Developer ID + entitlements below, then
+          # notarizes. An ad-hoc signature would fail notarization.
 
       - name: Install desktop deps
         working-directory: desktop
         run: npm install
 
-      - name: Build, sign updater artifacts, publish Release
+      - name: Build, sign + notarize, publish Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater package signing (minisign).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # The signing key was generated with an empty password, so this is the
-          # empty string (GitHub secrets can't be empty — set it inline here).
+          # Key has an empty password (GitHub secrets can't be empty → inline "").
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # Developer ID code signing (imported into a temp keychain by the action).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization (so Gatekeeper opens it with no "unidentified developer").
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
@@ -86,6 +92,9 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          # Enable updater artifacts only for this build (keeps local/GitLab
-          # builds unaffected).
-          args: --config "{\"bundle\":{\"createUpdaterArtifacts\":true}}"
+          # Per-build overrides (keeps local/GitLab/build.yml unaffected):
+          #  - createUpdaterArtifacts: produce the signed updater package + sig
+          #  - macOS.entitlements: apply disable-library-validation etc. during
+          #    Developer ID signing so the frozen sidecar's Python.framework loads
+          #    under the hardened runtime.
+          args: --config "{\"bundle\":{\"createUpdaterArtifacts\":true,\"macOS\":{\"signingIdentity\":\"Developer ID Application: Houde Qian (F3D2L9HSSK)\",\"entitlements\":\"entitlements.plist\"}}}"
