@@ -11,8 +11,10 @@ remains: add the signing secret and verify the first tagged release.
 
 ## Keys (already generated — `.updater-keys/`)
 - **Public key** → goes in `tauri.conf.json` (below).
-- **Private key** → GitHub repo secret `TAURI_SIGNING_PRIVATE_KEY`
-  (`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = empty).
+- **Private key** → GitHub repo secret `TAURI_SIGNING_PRIVATE_KEY` (one secret).
+  The key has an empty password; the workflow sets
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""` inline (GitHub secrets can't be empty),
+  so no password secret is needed.
 
 ## Changes to apply during migration
 
