@@ -61,6 +61,7 @@
 <header>
   <h1>Journey-Forge&nbsp;Local</h1>
   <span class="pill mut" id="srv">checking…</span>
+  <span class="pill mut" id="ver" title="running build">build …</span>
 </header>
 <nav>
   <button data-tab="skills" class="on">Skills &amp; trajectories</button>
@@ -95,6 +96,7 @@ $('#overlay').addEventListener('click',e=>{if(e.target===$('#overlay'))closeModa
 let TAB='skills';
 document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{TAB=b.dataset.tab;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));refresh();}));
 async function pingServer(){try{await fetch('/');$('#srv').textContent='server online';$('#srv').className='pill ok';}catch{$('#srv').textContent='server offline';$('#srv').className='pill err';}}
+async function showVersion(){try{const r=await fetch('/api/version');const v=await r.json();$('#ver').textContent='build '+(v.sha||'?');}catch{$('#ver').textContent='build ?';}}
 async function refresh(){pingServer();try{await ({skills:tabSkills,settings:tabSettings}[TAB])();}catch(e){main.innerHTML=`<div class="card"><span class="err">${esc(e.message)}</span><p class="mut">If this is an auth error, set the server key in Settings.</p></div>`;}}
 
 // ── Skills & trajectories (combined preview) ─────────────────────────────────
@@ -243,6 +245,7 @@ window.extOpenChrome = async ()=>{ try{ await api('/api/ext/open-chrome',{method
 window.extReveal = async ()=>{ try{ await api('/api/ext/reveal',{method:'POST'}); toast('Folder opened in Finder — pick it in "Load unpacked"'); }catch(e){ toast(e.message,true);} };
 
 refresh();
+showVersion();
 setInterval(pingServer,8000);
 </script>
 </body>

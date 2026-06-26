@@ -32,3 +32,6 @@ desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/
+
+# build stamp (written by build scripts)
+app/dist/build.json

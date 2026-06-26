@@ -18,6 +18,12 @@ source .build-venv/bin/activate
 pip install -q --upgrade pip
 pip install -q -r requirements.txt pyinstaller
 
+# Stamp the build commit so the panel can show exactly which build is running
+# (kills the "did my changes ship?" guesswork after a CI download).
+BUILD_SHA="${CI_COMMIT_SHORT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+printf '{"sha":"%s"}\n' "$BUILD_SHA" > app/dist/build.json
+echo "    build stamp: $BUILD_SHA"
+
 echo "[3/4] Freezing the sidecar (jfl-server)…"
 pyinstaller --noconfirm --clean --onefile --name jfl-server \
   --paths "$REPO" --paths "$REPO/server" \

@@ -1035,6 +1035,20 @@ def api_desktop_disconnect(authorization: str = Header(None)):
 _NOCACHE = {"Cache-Control": "no-store, must-revalidate"}
 
 
+@app.get("/api/version")
+def api_version():
+    """The build SHA baked in at freeze time (app/dist/build.json). Lets the
+    panel show which build is actually running — no auth so it always renders."""
+    f = APP_BUILD / "build.json"
+    sha = "dev"
+    if f.is_file():
+        try:
+            sha = json.loads(f.read_text()).get("sha", "dev")
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"sha": sha}
+
+
 @app.get("/")
 def index():
     idx = APP_BUILD / "index.html"
