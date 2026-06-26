@@ -463,11 +463,21 @@ def _ingest_distill_install(upload_id: str) -> None:
         from harness.install import install_registry
         from harness import progress as hprogress
 
+        seg_file = HARNESS_STATE / "segments.jsonl"
+
+        def _seg_count() -> int:
+            try:
+                with seg_file.open() as f:
+                    return sum(1 for _ in f)
+            except OSError:
+                return 0
+
         trace_json = _trace_dir(upload_id) / "trace.json"
         with _PIPELINE_LOCK:
             hprogress.set_reporter(_rep)
             _apply_harness_config(cfg)
             n_before = len(_read_json_file(HARNESS_STATE / "buckets.json", {}).get("buckets", {}))
+            n_seg_before = _seg_count()
             _rep("ingest", 0, 0, "atomizing")
             run_ingest_file(trace_json)
             run_distill()
@@ -476,17 +486,22 @@ def _ingest_distill_install(upload_id: str) -> None:
             hprogress.set_reporter(None)
         _rep("done", 0, 0, f"{len(installed)} skill(s)")
         n_buckets = len(_read_json_file(HARNESS_STATE / "buckets.json", {}).get("buckets", {}))
+        classified = _seg_count() - n_seg_before  # segments THIS recording classified
         note = ""
         if not installed:
             note = ("No skills produced — likely the classify/distill LLM call failed "
                     "(check the LLM key/base/model; a custom gateway may not serve the model).")
+        elif classified <= 0:
+            # Nothing from this recording got classified — the classify LLM calls
+            # failed for its segments (e.g. the gateway blocked them).
+            note = ("This recording classified 0 segments — the classify LLM calls failed "
+                    "(check Logs / the LLM gateway). Use Reprocess after fixing it.")
         elif n_buckets == n_before:
-            # The pipeline "succeeded" but THIS recording added no new capability
-            # bucket — almost always classify failing for its segments (e.g. the
-            # gateway 403'd the calls). Don't report a silent success.
-            note = ("This recording produced 0 new skills — its segments were not "
-                    "classified (check the logs: the classify LLM calls likely failed). "
-                    "Use Reprocess after fixing the LLM gateway.")
+            # Classified fine, but merged into existing skill(s) rather than creating
+            # a new capability bucket — the intended behavior for a repeat of a known
+            # task (it reinforces/updates that skill). Not an error.
+            note = (f"Merged {classified} segment(s) into an existing skill (reinforced it); "
+                    "no new capability bucket — normal for a repeat of a known task.")
         with update_meta(upload_id) as meta:
             meta["distill_status"] = "done"
             meta["distill_result"] = {"ok": True, "installed_count": len(installed),
