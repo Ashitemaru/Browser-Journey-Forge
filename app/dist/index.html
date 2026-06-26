@@ -166,11 +166,29 @@ async function tabSettings(){
     </div>
     <div id="cfg_llm" class="card"><p class="mut">Loading LLM settings…</p></div>
     <div id="cfg_desktop" class="card"><p class="mut">Loading Claude Desktop status…</p></div>
-    <div id="cfg_ext" class="card"><p class="mut">Loading extension status…</p></div>`;
+    <div id="cfg_ext" class="card"><p class="mut">Loading extension status…</p></div>
+    <div id="cfg_logs" class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">Logs</h2>
+        <div class="row"><label class="mut" style="margin:0"><input type="checkbox" id="log_auto" style="width:auto;margin-right:5px" onchange="toggleLogAuto(this.checked)">auto</label>
+          <button class="ghost" onclick="loadLogs()">Refresh</button></div>
+      </div>
+      <p class="mut" id="log_path" style="font-size:11px"></p>
+      <pre id="log_box" style="max-height:340px">loading…</pre>
+    </div>`;
   renderLlmSettings();
   renderDesktop();
   renderExtension();
+  loadLogs();
 }
+let _logTimer=null;
+window.loadLogs = async ()=>{
+  try{ const r=await api('/api/logs'); const box=$('#log_box'); if(!box) return;
+    box.textContent = r.log || '(empty)'; box.scrollTop = box.scrollHeight;
+    const p=$('#log_path'); if(p) p.textContent = r.path||'';
+  }catch(e){ const box=$('#log_box'); if(box) box.textContent = e.message; }
+};
+window.toggleLogAuto = (on)=>{ clearInterval(_logTimer); if(on && TAB==='settings'){ _logTimer=setInterval(()=>{ if(TAB==='settings') loadLogs(); else clearInterval(_logTimer); }, 2000); } };
 window.saveServerKey = ()=>{ API_KEY=$('#s_serverkey').value.trim(); localStorage.setItem('jfl_api_key',API_KEY); toast('Server key applied'); refresh(); };
 
 async function renderLlmSettings(){

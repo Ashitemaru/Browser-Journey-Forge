@@ -71,10 +71,29 @@ APP_BUILD = Path(os.environ.get("JFL_APP_BUILD", str(REPO / "app" / "dist")))   
 EXT_BUILD = Path(os.environ.get("JFL_EXT_BUILD", str(REPO / "extension" / "dist" / "chrome-mv3")))  # wxt build
 
 # ── Logging ────────────────────────────────────────────────────────────────
+# Always persist logs to a file under the data dir so they're visible even when
+# the app is launched normally (double-click) — no need to start it from a
+# terminal. The panel tails this file via GET /api/logs.
+LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "jfl-server.log"
+_log_handlers: list = [logging.StreamHandler()]
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    from logging.handlers import RotatingFileHandler
+    _log_handlers.append(RotatingFileHandler(LOG_FILE, maxBytes=4_000_000, backupCount=3))
+except OSError:
+    pass
 logging.basicConfig(
     level=os.environ.get("JFL_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=_log_handlers,
 )
+# Line-buffer stdout so any remaining print() interleaves live in a terminal too.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(line_buffering=True)
+    except Exception:  # noqa: BLE001
+        pass
 logger = logging.getLogger("journey_forge_local")
 
 MAX_EVENT_CHUNK_BYTES = int(os.environ.get("JFL_MAX_EVENT_CHUNK_BYTES", 16 * 1024 * 1024))
@@ -1042,6 +1061,19 @@ def api_desktop_disconnect(authorization: str = Header(None)):
 # build could keep showing the old UI. Serve it no-store so the webview always
 # fetches the version bundled in the running app.
 _NOCACHE = {"Cache-Control": "no-store, must-revalidate"}
+
+
+@app.get("/api/logs")
+def api_logs(authorization: str = Header(None), lines: int = 400):
+    """Tail of the persisted server log — lets the panel show logs without
+    launching the app from a terminal."""
+    _check_auth(authorization)
+    try:
+        data = LOG_FILE.read_text(errors="replace")
+        tail = "\n".join(data.splitlines()[-max(1, min(lines, 5000)):])
+    except OSError:
+        tail = ""
+    return {"path": str(LOG_FILE), "log": tail}
 
 
 @app.get("/api/version")

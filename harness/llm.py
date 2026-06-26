@@ -9,6 +9,7 @@ rest of the harness expects.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import ssl
 import time
@@ -16,6 +17,8 @@ import urllib.error
 import urllib.request
 
 from . import config
+
+logger = logging.getLogger("journey_forge_local.llm")
 
 
 def _is_anthropic(base: str) -> bool:
@@ -107,7 +110,8 @@ def call_llm(
         except Exception as e:  # noqa: BLE001
             last_err = e
         wait = min(2**attempt, 8)
-        print(f"[llm] attempt {attempt + 1}/{retries} failed: {last_err}; retry in {wait}s")
+        logger.warning("LLM attempt %d/%d failed: %s; retry in %ds",
+                       attempt + 1, retries, last_err, wait)
         time.sleep(wait)
     raise RuntimeError(f"LLM call failed after {retries} retries: {last_err}")
 
