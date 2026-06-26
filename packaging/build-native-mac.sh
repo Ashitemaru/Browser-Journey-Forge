@@ -34,6 +34,7 @@ pyinstaller --noconfirm --clean --onefile --name jfl-server \
   --collect-submodules fastapi \
   --hidden-import server \
   --hidden-import skill_mcp \
+  --hidden-import tomli \
   packaging/sidecar_main.py
 TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
 mkdir -p desktop/src-tauri/binaries

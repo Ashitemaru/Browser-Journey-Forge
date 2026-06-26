@@ -2,6 +2,8 @@
 # The control panel opens in your system browser, so no GUI toolkit is needed.
 fastapi>=0.110
 uvicorn>=0.27
+# Read Codex's config.toml on any Python (tomllib is stdlib only on 3.11+).
+tomli>=2.0
 
 # Optional native window instead of the browser. Pulls the pyobjc Cocoa/WebKit
 # backend on macOS (can be slow/fragile to install). Enable with

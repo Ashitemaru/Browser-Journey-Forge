@@ -166,6 +166,7 @@ async function tabSettings(){
     </div>
     <div id="cfg_llm" class="card"><p class="mut">Loading LLM settings…</p></div>
     <div id="cfg_desktop" class="card"><p class="mut">Loading Claude Desktop status…</p></div>
+    <div id="cfg_codex" class="card"><p class="mut">Loading Codex status…</p></div>
     <div id="cfg_ext" class="card"><p class="mut">Loading extension status…</p></div>
     <div id="cfg_logs" class="card">
       <div class="row" style="justify-content:space-between">
@@ -178,6 +179,7 @@ async function tabSettings(){
     </div>`;
   renderLlmSettings();
   renderDesktop();
+  renderCodex();
   renderExtension();
   loadLogs();
 }
@@ -243,11 +245,37 @@ async function renderDesktop(){
     <p class="mut" style="font-size:12px">Test in a chat: “call get_skill for google flights, then use playwright to …”.</p>
     <details style="margin-top:8px"><summary class="mut">Manual snippet</summary><pre>${esc(JSON.stringify(d.snippet,null,2))}</pre></details>`;
 }
-window.installNode = async ()=>{ toast('Downloading Node… (~30s)'); try{ const r=await api('/api/desktop/install-node',{method:'POST'}); toast('Node ready: '+(r.version||r.npx)); renderDesktop(); }catch(e){ toast(e.message,true);} };
+window.installNode = async ()=>{ toast('Downloading Node… (~30s)'); try{ const r=await api('/api/desktop/install-node',{method:'POST'}); toast('Node ready: '+(r.version||r.npx)); renderDesktop(); renderCodex(); }catch(e){ toast(e.message,true);} };
 window.setMcp = async (playwright, skills)=>{
   try{ const r=await api('/api/desktop/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playwright,skills})}); toast(r.message); }
   catch(e){ toast(e.message,true); }
   renderDesktop();
+};
+
+// ── Codex connection (MCP via ~/.codex/config.toml — parallel to Claude) ──────
+async function renderCodex(){
+  let d; try{ d = await api('/api/codex/config'); }
+  catch(e){ const el=$('#cfg_codex'); if(el) el.innerHTML=`<h2>Codex</h2><span class="err">${esc(e.message)}</span>`; return; }
+  const el=$('#cfg_codex'); if(!el) return;
+  const pw = !!d.playwright_configured, sk = !!d.skills_mcp_configured;
+  const pwToggleable = d.node_found || pw;
+  el.innerHTML = `<h2>Codex connection</h2>
+    <p class="mut">Same two integrations for Codex (writes <code>~/.codex/config.toml</code>). <b>Restart Codex once</b> after changing a toggle. Records still work without this.</p>
+    ${d.node_found?'':'<p class="mut" style="font-size:12px"><span class="err">Node not found</span> — needed for browser control. Install it in the Claude Desktop section above.</p>'}
+    <div class="toggle-row">
+      <label class="sw"><input type="checkbox" ${pw?'checked':''} ${pwToggleable?'':'disabled'} onchange="setCodexMcp(this.checked, ${sk})"><span class="sl"></span></label>
+      <div><b>Browser control (Playwright MCP)</b> ${pw?'<span class="ok">on</span>':'<span class="mut">off</span>'}</div>
+    </div>
+    <div class="toggle-row">
+      <label class="sw"><input type="checkbox" ${sk?'checked':''} onchange="setCodexMcp(${pw}, this.checked)"><span class="sl"></span></label>
+      <div><b>Distilled skills (get_skill MCP)</b> ${sk?'<span class="ok">on</span>':'<span class="mut">off</span>'}</div>
+    </div>
+    <p class="mut" style="font-size:12px">Config: <code>${esc(d.config_path)}</code> ${d.config_exists?'':'(will be created)'}</p>`;
+}
+window.setCodexMcp = async (playwright, skills)=>{
+  try{ const r=await api('/api/codex/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playwright,skills})}); toast(r.message); }
+  catch(e){ toast(e.message,true); }
+  renderCodex();
 };
 
 // ── Extension management ──────────────────────────────────────────────────────

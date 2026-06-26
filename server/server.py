@@ -1055,6 +1055,140 @@ def api_desktop_disconnect(authorization: str = Header(None)):
     }
 
 
+# ── Codex integration (MCP via ~/.codex/config.toml — TOML, not JSON) ────────
+def _codex_config_path() -> Path:
+    override = os.environ.get("JFL_CODEX_CONFIG")
+    if override:
+        return Path(override)
+    return Path.home() / ".codex" / "config.toml"
+
+
+def _toml_str(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\t", "\\t") + '"'
+
+
+def _toml_key(k: str) -> str:
+    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k or "") else _toml_str(k)
+
+
+def _toml_inline(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return _toml_str(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_inline(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml_inline(x)}" for k, x in v.items()) + "}"
+    return _toml_str(str(v))
+
+
+def _toml_section(name: str, data: dict) -> str:
+    scalars = [(k, v) for k, v in data.items() if not isinstance(v, dict)]
+    tables = [(k, v) for k, v in data.items() if isinstance(v, dict)]
+    out: list[str] = []
+    if scalars or not tables:
+        out.append(f"[{name}]")
+        out += [f"{_toml_key(k)} = {_toml_inline(v)}" for k, v in scalars]
+    for k, v in tables:
+        out.append("")
+        out.append(_toml_section(f"{name}.{_toml_key(k)}", v))
+    return "\n".join(out)
+
+
+def _toml_dumps(data: dict) -> str:
+    """Minimal TOML emitter — enough to round-trip a Codex config.toml (scalars,
+    arrays, nested tables). Comments are not preserved (the original is backed up)."""
+    scalars = [(k, v) for k, v in data.items() if not isinstance(v, dict)]
+    tables = [(k, v) for k, v in data.items() if isinstance(v, dict)]
+    out = [f"{_toml_key(k)} = {_toml_inline(v)}" for k, v in scalars]
+    for k, v in tables:
+        if out:
+            out.append("")
+        out.append(_toml_section(_toml_key(k), v))
+    return "\n".join(out) + "\n"
+
+
+def _load_codex_toml(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        import tomllib  # py3.11+
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib  # type: ignore
+        except ModuleNotFoundError:
+            raise HTTPException(500, "Cannot read TOML (no tomllib). Set JFL_CODEX_CONFIG to a fresh path.")
+    try:
+        return tomllib.loads(path.read_text())
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"{path} is not valid TOML; fix or remove it first: {e}")
+
+
+@app.get("/api/codex/config")
+def api_codex_config(authorization: str = Header(None)):
+    _check_auth(authorization)
+    cfg_path = _codex_config_path()
+    exists = cfg_path.exists()
+    pw = sk = False
+    if exists:
+        try:
+            servers = (_load_codex_toml(cfg_path).get("mcp_servers") or {})
+            pw, sk = "playwright" in servers, "journey-forge-skills" in servers
+        except HTTPException:
+            pass
+    npx, node = _find_npx()
+    return {
+        "config_path": str(cfg_path),
+        "config_exists": exists,
+        "playwright_configured": pw,
+        "skills_mcp_configured": sk,
+        "node_found": bool(npx),
+        "node_version": _node_version(node),
+    }
+
+
+@app.post("/api/codex/mcp")
+async def api_codex_mcp(request: Request, authorization: str = Header(None)):
+    """Declaratively set our MCP servers in Codex's config.toml (TOML mirror of
+    /api/desktop/mcp). Body: {"playwright": bool, "skills": bool}. Backs up first."""
+    _check_auth(authorization)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    want_pw = bool(body.get("playwright"))
+    want_skills = bool(body.get("skills"))
+    if want_pw and not _find_npx()[0]:
+        raise HTTPException(400, "Node.js / npx not found — install it first (Install Node)")
+    cfg_path = _codex_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = _load_codex_toml(cfg_path)
+    if cfg_path.exists():
+        shutil.copy2(cfg_path, cfg_path.with_suffix(cfg_path.suffix + ".jfl.bak"))
+    servers = data.setdefault("mcp_servers", {})
+    if want_pw:
+        servers["playwright"] = _playwright_entry()
+    else:
+        servers.pop("playwright", None)
+    if want_skills:
+        servers["journey-forge-skills"] = _skill_mcp_entry()
+    else:
+        servers.pop("journey-forge-skills", None)
+    _atomic_write(cfg_path, _toml_dumps(data))
+    logger.info("[codex] MCP set playwright=%s skills=%s in %s", want_pw, want_skills, cfg_path)
+    return {
+        "ok": True,
+        "playwright": want_pw,
+        "skills": want_skills,
+        "config_path": str(cfg_path),
+        "restart_required": True,
+        "message": "Updated Codex MCP servers (config.toml). Restart Codex once to apply.",
+    }
+
+
 # ── Static control panel (mounted last so /api & /v1 win) ────────────────────
 # The panel is a single self-contained HTML doc. The native app's WKWebView
 # caches it aggressively (same 127.0.0.1:8099 URL across app versions), so a new
