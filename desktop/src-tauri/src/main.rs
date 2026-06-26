@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::{SocketAddr, TcpStream};
+use std::process::Command;
 use std::time::Duration;
 
 use tauri::Manager;
@@ -16,6 +17,13 @@ const ADDR: &str = "127.0.0.1:8099";
 
 fn main() {
     tauri::Builder::default()
+        // Single instance must be registered first: a second launch focuses the
+        // existing window instead of racing for port 8099 with a second sidecar.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -33,7 +41,14 @@ fn main() {
                 }
             });
 
-            // 1. Spawn the sidecar (binaries/jfl-server-<target-triple>).
+            // 1. Kill any leftover sidecar from a previous (crashed or just-updated)
+            //    instance so the fresh one can bind 8099 — otherwise the new app
+            //    would silently attach to the stale server (the "installed update
+            //    but version didn't change" bug).
+            let _ = Command::new("pkill").args(["-9", "-f", "jfl-server"]).status();
+            std::thread::sleep(Duration::from_millis(300));
+
+            // 2. Spawn the sidecar (binaries/jfl-server-<target-triple>).
             let sidecar = app.shell().sidecar("jfl-server")?;
             let (mut rx, child) = sidecar.spawn()?;
             // Keep the child alive for the app's lifetime.
