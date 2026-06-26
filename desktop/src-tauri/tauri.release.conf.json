@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Houde Qian (F3D2L9HSSK)",
+      "entitlements": "entitlements.plist"
+    }
+  }
+}

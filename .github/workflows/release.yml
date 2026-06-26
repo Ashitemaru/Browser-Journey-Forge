@@ -92,9 +92,8 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
-          # Per-build overrides (keeps local/GitLab/build.yml unaffected):
-          #  - createUpdaterArtifacts: produce the signed updater package + sig
-          #  - macOS.entitlements: apply disable-library-validation etc. during
-          #    Developer ID signing so the frozen sidecar's Python.framework loads
-          #    under the hardened runtime.
-          args: --config "{\"bundle\":{\"createUpdaterArtifacts\":true,\"macOS\":{\"signingIdentity\":\"Developer ID Application: Houde Qian (F3D2L9HSSK)\",\"entitlements\":\"entitlements.plist\"}}}"
+          # Per-build overrides live in a file (no spaces/escaping in YAML or the
+          # arg split). Enables createUpdaterArtifacts + Developer ID signing +
+          # entitlements only for the release build; local/GitLab/build.yml stay
+          # ad-hoc. See desktop/src-tauri/tauri.release.conf.json.
+          args: --config src-tauri/tauri.release.conf.json
