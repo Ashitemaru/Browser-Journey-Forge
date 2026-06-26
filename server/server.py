@@ -978,11 +978,18 @@ def api_desktop_disconnect(authorization: str = Header(None)):
 
 
 # ── Static control panel (mounted last so /api & /v1 win) ────────────────────
+# The panel is a single self-contained HTML doc. The native app's WKWebView
+# caches it aggressively (same 127.0.0.1:8099 URL across app versions), so a new
+# build could keep showing the old UI. Serve it no-store so the webview always
+# fetches the version bundled in the running app.
+_NOCACHE = {"Cache-Control": "no-store, must-revalidate"}
+
+
 @app.get("/")
 def index():
     idx = APP_BUILD / "index.html"
     if idx.exists():
-        return FileResponse(idx)
+        return FileResponse(idx, headers=_NOCACHE)
     return JSONResponse({"ok": True, "msg": "Journey-Forge Local server running. "
                          "Build the control panel (app/) to see the UI."})
 
