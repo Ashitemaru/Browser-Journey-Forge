@@ -1,8 +1,61 @@
 import { sha256Hex } from '@/shared/hash';
 import { createId } from '@/shared/id';
-import type { DomNode, DomSnapshotEvent, RedactedValue } from '@/shared/types';
-import { frameMetadataFor } from './captcha';
+import type { CaptchaProvider, DomNode, DomSnapshotEvent, FrameMetadata, RedactedValue } from '@/shared/types';
 import { bestSelector } from './selector';
+
+const CAPTCHA_PROVIDERS: Array<{ provider: CaptchaProvider; patterns: RegExp[] }> = [
+  { provider: 'google_recaptcha', patterns: [/recaptcha/i, /google\.com$/i, /gstatic\.com$/i] },
+  { provider: 'hcaptcha', patterns: [/hcaptcha/i] },
+  { provider: 'cloudflare_turnstile', patterns: [/turnstile/i, /challenges\.cloudflare\.com$/i] },
+  { provider: 'arkose', patterns: [/arkose/i, /funcaptcha/i] },
+  { provider: 'geetest', patterns: [/geetest/i] }
+];
+
+const GENERIC_CAPTCHA_RE = /captcha|challenge|verification/i;
+
+function frameMetadataFor(element: HTMLIFrameElement): FrameMetadata {
+  const safeSrc = safeFrameSrc(element.getAttribute('src'));
+  const title = cleanFrameAttr(element.getAttribute('title'));
+  const name = cleanFrameAttr(element.getAttribute('name'));
+  const sandbox = cleanFrameAttr(element.getAttribute('sandbox'));
+  const haystack = [safeSrc.srcHost, safeSrc.srcPath, title, name, element.id, element.className].filter(Boolean).join(' ');
+  const provider = detectCaptchaProvider(haystack);
+  const isCaptcha = Boolean(provider) || GENERIC_CAPTCHA_RE.test(haystack);
+
+  return {
+    isCaptcha,
+    ...(provider ? { provider } : isCaptcha ? { provider: 'generic_captcha' as const } : {}),
+    ...safeSrc,
+    ...(title ? { title } : {}),
+    ...(name ? { name } : {}),
+    ...(sandbox ? { sandbox } : {})
+  };
+}
+
+function detectCaptchaProvider(value: string): CaptchaProvider | null {
+  for (const candidate of CAPTCHA_PROVIDERS) {
+    if (candidate.patterns.some((pattern) => pattern.test(value))) return candidate.provider;
+  }
+  return null;
+}
+
+function safeFrameSrc(src: string | null): Pick<FrameMetadata, 'srcHost' | 'srcPath'> {
+  if (!src) return {};
+  try {
+    const url = new URL(src, location.href);
+    return {
+      srcHost: url.hostname,
+      srcPath: url.pathname || '/'
+    };
+  } catch {
+    return {};
+  }
+}
+
+function cleanFrameAttr(value: string | null): string | undefined {
+  const cleaned = value?.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return cleaned || undefined;
+}
 
 const MAX_NODES = 300;
 const INTERACTABLE_SELECTOR = [

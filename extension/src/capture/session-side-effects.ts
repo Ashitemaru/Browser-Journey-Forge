@@ -1,18 +1,4 @@
-import { captchaProvidersFromSnapshot } from './captcha';
-import { createId } from '@/shared/id';
-import type {
-  ActionEvent,
-  AnnotationEvent,
-  CaptchaProvider,
-  DomSnapshotEvent,
-} from '@/shared/types';
-
-export type CaptchaTraceStateOptions = {
-  traceId: string;
-  tabId?: number;
-  now?: () => number;
-  url?: () => string;
-};
+import type { ActionEvent, DomSnapshotEvent } from '@/shared/types';
 
 const DEFAULT_DOM_SNAPSHOT_INTERVAL_MS = 10_000;
 
@@ -68,59 +54,6 @@ export function createDomSnapshotDedupe() {
 
     clear(traceId: string): void {
       lastKeyByTrace.delete(traceId);
-    },
-  };
-}
-
-export function createCaptchaTraceState(options: CaptchaTraceStateOptions) {
-  const seenProviders = new Set<CaptchaProvider>();
-  const now = options.now ?? (() => Date.now());
-  const currentUrl = options.url ?? (() => location.href);
-
-  return {
-    annotationEventsForSnapshot(snapshot: DomSnapshotEvent): AnnotationEvent[] {
-      const newProviders = captchaProvidersFromSnapshot(snapshot).filter(
-        (provider) => !seenProviders.has(provider)
-      );
-      if (!newProviders.length) return [];
-      for (const provider of newProviders) seenProviders.add(provider);
-      return [
-        {
-          event_id: createId('ev_'),
-          trace_id: options.traceId,
-          tab_id: options.tabId ?? snapshot.tab_id ?? -1,
-          timestamp: now(),
-          url: currentUrl(),
-          kind: 'annotation',
-          annotation_type: 'captcha_detected',
-          text: newProviders.join(','),
-        },
-      ];
-    },
-  };
-}
-
-export function createCaptchaProviderDedupe() {
-  const seenByTrace = new Map<string, Set<CaptchaProvider>>();
-
-  return {
-    newProviders(
-      traceId: string,
-      providers: CaptchaProvider[]
-    ): CaptchaProvider[] {
-      const seen = seenByTrace.get(traceId) ?? new Set<CaptchaProvider>();
-      seenByTrace.set(traceId, seen);
-      const result: CaptchaProvider[] = [];
-      for (const provider of providers) {
-        if (seen.has(provider)) continue;
-        seen.add(provider);
-        result.push(provider);
-      }
-      return result;
-    },
-
-    clear(traceId: string): void {
-      seenByTrace.delete(traceId);
     },
   };
 }

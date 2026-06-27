@@ -1,6 +1,5 @@
 import { browser } from 'wxt/browser';
 import { downloadEventFromDelta, downloadEventFromItem } from '@/capture/download-events';
-import { createCaptchaProviderDedupe } from '@/capture/session-side-effects';
 import { shouldRecordBrowserNavigationUrl, tabNavigationEvent } from '@/capture/tab-navigation';
 import {
   appendEvent,
@@ -9,8 +8,7 @@ import {
   stopRecording,
 } from '@/recording/recorder';
 import { errorMessage } from '@/shared/errors';
-import { createId } from '@/shared/id';
-import type { CaptchaProvider, CapturedEvent, CaptureSettings, RecordingRow } from '@/shared/types';
+import type { CapturedEvent, CaptureSettings, RecordingRow } from '@/shared/types';
 import { db } from '@/storage/db';
 import { uploadRecording } from '@/upload/runner';
 
@@ -19,8 +17,6 @@ type RuntimeMessage =
   | { type: 'start-recording'; label?: string }
   | { type: 'stop-recording'; traceId?: string }
   | { type: 'event'; event: CapturedEvent }
-  | { type: 'captcha-detected'; traceId?: string; triggerEventId: string; providers: CaptchaProvider[] }
-  | { type: 'append-annotation'; traceId?: string; annotationType: 'captcha_solved' | 'captcha_blocked'; text?: string }
   | { type: 'resume-upload'; traceId: string; label?: string }
   | { type: 'delete-recording'; traceId: string };
 
@@ -36,7 +32,6 @@ type SenderLike = {
 let activeTraceId: string | null = null;
 let activeTraceRecovered = false;
 let recovery: Promise<void> | null = null;
-const captchaDedupe = createCaptchaProviderDedupe();
 const CONTENT_FLUSH_TIMEOUT_MS = 1500;
 const tabUrlCache = new Map<number, string>();
 const DEFAULT_CAPTURE_SETTINGS: CaptureSettings = {
@@ -100,7 +95,6 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
       if (!traceId) return { active: false, traceId: null };
       await flushRecordingTabs(traceId);
       const row = await stopRecording(traceId);
-      captchaDedupe.clear(traceId);
       if (activeTraceId === traceId) activeTraceId = null;
       activeTraceRecovered = false;
       await broadcastRecordingState(false, null, null);
@@ -115,12 +109,6 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
       return { ok: true };
     }
 
-    case 'captcha-detected':
-      return await appendCaptchaDetected(message.traceId ?? activeTraceId, message.providers, sender);
-
-    case 'append-annotation':
-      return await appendAnnotation(message.traceId ?? activeTraceId, message.annotationType, message.text, sender);
-
     case 'resume-upload': {
       await ensureUploadable(message.traceId, message.label);
       const row = await uploadRecording(message.traceId);
@@ -129,7 +117,6 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
 
     case 'delete-recording': {
       await deleteRecordingLocal(message.traceId);
-      captchaDedupe.clear(message.traceId);
       if (activeTraceId === message.traceId) {
         activeTraceId = null;
         activeTraceRecovered = false;
@@ -161,27 +148,6 @@ async function ensureUploadable(traceId: string, label?: string): Promise<void> 
   await setRecordingLabel(traceId, trimmed);
 }
 
-async function appendCaptchaDetected(
-  traceId: string | null,
-  providers: CaptchaProvider[],
-  sender: SenderLike
-): Promise<{ ok: boolean; providers?: CaptchaProvider[]; error?: string }> {
-  if (!traceId) return { ok: false, error: 'no active recording' };
-  const newProviders = captchaDedupe.newProviders(traceId, providers);
-  if (!newProviders.length) return { ok: true, providers: [] };
-  await appendEvent({
-    event_id: createId('ev_'),
-    trace_id: traceId,
-    tab_id: sender.tab?.id ?? -1,
-    timestamp: Date.now(),
-    url: sender.tab?.url ?? '',
-    kind: 'annotation',
-    annotation_type: 'captcha_detected',
-    text: newProviders.join(',')
-  });
-  return { ok: true, providers: newProviders };
-}
-
 async function recoverActiveTraceId(): Promise<void> {
   const active = await db.recordings.where('status').equals('recording').toArray();
   active.sort((left, right) => right.updated_at - left.updated_at);
@@ -204,26 +170,6 @@ function normalizeEvent(event: CapturedEvent, sender: SenderLike, traceId: strin
     tab_id: sender.tab?.id ?? event.tab_id ?? -1,
     url: event.url || sender.tab?.url || ''
   } as CapturedEvent;
-}
-
-async function appendAnnotation(
-  traceId: string | null,
-  annotationType: 'captcha_solved' | 'captcha_blocked',
-  text: string | undefined,
-  sender: SenderLike
-): Promise<{ ok: boolean; error?: string }> {
-  if (!traceId) return { ok: false, error: 'no active recording' };
-  await appendEvent({
-    event_id: createId('ev_'),
-    trace_id: traceId,
-    tab_id: sender.tab?.id ?? -1,
-    timestamp: Date.now(),
-    url: sender.tab?.url ?? '',
-    kind: 'annotation',
-    annotation_type: annotationType,
-    ...(text ? { text } : {})
-  });
-  return { ok: true };
 }
 
 async function refreshRecordingBadge(): Promise<void> {
@@ -395,41 +341,7 @@ function isRuntimeMessage(message: unknown): message is RuntimeMessage {
     type === 'start-recording' ||
     type === 'stop-recording' ||
     type === 'event' ||
-    isCaptchaDetectedMessage(message) ||
-    isAppendAnnotationMessage(message) ||
     (type === 'resume-upload' && typeof (message as { traceId?: unknown }).traceId === 'string') ||
     (type === 'delete-recording' && typeof (message as { traceId?: unknown }).traceId === 'string')
-  );
-}
-
-function isCaptchaDetectedMessage(message: object): boolean {
-  const value = message as { type?: unknown; traceId?: unknown; triggerEventId?: unknown; providers?: unknown };
-  return (
-    value.type === 'captcha-detected' &&
-    (value.traceId === undefined || typeof value.traceId === 'string') &&
-    typeof value.triggerEventId === 'string' &&
-    Array.isArray(value.providers) &&
-    value.providers.every(isCaptchaProvider)
-  );
-}
-
-function isCaptchaProvider(value: unknown): value is CaptchaProvider {
-  return (
-    value === 'google_recaptcha' ||
-    value === 'hcaptcha' ||
-    value === 'cloudflare_turnstile' ||
-    value === 'arkose' ||
-    value === 'geetest' ||
-    value === 'generic_captcha'
-  );
-}
-
-function isAppendAnnotationMessage(message: object): boolean {
-  const value = message as { type?: unknown; traceId?: unknown; annotationType?: unknown; text?: unknown };
-  return (
-    value.type === 'append-annotation' &&
-    (value.traceId === undefined || typeof value.traceId === 'string') &&
-    (value.text === undefined || typeof value.text === 'string') &&
-    (value.annotationType === 'captcha_solved' || value.annotationType === 'captcha_blocked')
   );
 }

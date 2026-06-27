@@ -7,7 +7,7 @@ import { db, getConfig } from '@/storage/db';
 
 export async function startRecording(
   clock: Clock = systemClock,
-  opts?: { taskCaseId?: string; label?: string }
+  opts?: { label?: string }
 ): Promise<RecordingRow> {
   const config = await getConfig();
   if (!config.endpoint_url || !config.api_key) {
@@ -33,7 +33,6 @@ export async function startRecording(
       recording_mode: config.recording_mode,
       started_at: clock.isoNow(),
       tags: [],
-      ...(opts?.taskCaseId ? { task_case_id: opts.taskCaseId } : {}),
       ...(resolveLabel(opts) ? { label: resolveLabel(opts) } : {}),
       capture_settings: captureSettings,
       browser: {
@@ -70,8 +69,8 @@ export async function startRecording(
   return row;
 }
 
-function resolveLabel(opts?: { taskCaseId?: string; label?: string }): string {
-  return opts?.label?.trim() || opts?.taskCaseId?.trim() || '';
+function resolveLabel(opts?: { label?: string }): string {
+  return opts?.label?.trim() || '';
 }
 
 export async function stopRecording(

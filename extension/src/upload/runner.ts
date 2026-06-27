@@ -51,8 +51,6 @@ export async function uploadRecording(traceId: string, signal?: AbortSignal): Pr
         label: freshRow.envelope.label ?? '',
         description: freshRow.envelope.description ?? '',
         tags: freshRow.envelope.tags,
-        ...(freshRow.envelope.task_case_id ? { task_case_id: freshRow.envelope.task_case_id } : {}),
-        ...(freshRow.envelope.identity_bundle_id ? { identity_bundle_id: freshRow.envelope.identity_bundle_id } : {}),
         summary: freshRow.envelope.summary,
         capture_settings: freshRow.envelope.capture_settings ?? config.capture
       }

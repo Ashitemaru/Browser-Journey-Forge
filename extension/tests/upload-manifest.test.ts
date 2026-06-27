@@ -213,7 +213,6 @@ async function seedRecording(): Promise<void> {
       started_at: '2026-06-03T00:00:00.000Z',
       label: 'Test trace',
       tags: [],
-      identity_bundle_id: 'idb_upload',
       browser: { extension_version: '0.1.0', user_agent: 'vitest', timezone: 'UTC' },
       summary: {
         domains: ['example.test'],

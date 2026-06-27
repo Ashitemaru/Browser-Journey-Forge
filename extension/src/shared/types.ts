@@ -64,8 +64,6 @@ export type TraceEnvelope = {
   label?: string;
   description?: string;
   tags: string[];
-  task_case_id?: string;
-  identity_bundle_id?: string;
   capture_settings?: CaptureSettings;
   browser: {
     extension_version: string;
@@ -283,9 +281,6 @@ export type AnnotationEvent = EventBase & {
     | 'resume'
     | 'label_updated'
     | 'description_updated'
-    | 'captcha_detected'
-    | 'captcha_solved'
-    | 'captcha_blocked'
     | 'video_started'
     | 'video_stopped'
     | 'video_failed'

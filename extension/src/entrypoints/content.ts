@@ -2,7 +2,6 @@ import {
   installActionRecorder,
   type InstalledCapture,
 } from '@/capture/action-recorder';
-import { captchaProvidersFromSnapshot } from '@/capture/captcha';
 import { captureDomSnapshot } from '@/capture/dom-snapshot';
 import { installFormSummaryRecorder } from '@/capture/form-summary-recorder';
 import { installMutationSummaryRecorder } from '@/capture/mutation-summary-recorder';
@@ -179,15 +178,6 @@ async function captureAndSendSnapshot(
   });
   if (!domSnapshotDedupe.shouldSend(event)) return;
   await sendToBackground({ type: 'event', event });
-  const captchaProviders = captchaProvidersFromSnapshot(event);
-  if (captchaProviders.length) {
-    await sendToBackground({
-      type: 'captcha-detected',
-      traceId,
-      triggerEventId: event.event_id,
-      providers: captchaProviders,
-    });
-  }
 }
 
 function stopCapture(

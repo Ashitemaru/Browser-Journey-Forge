@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createCaptchaProviderDedupe,
   createDomSnapshotDedupe,
   createDomSnapshotScheduler,
   shouldCaptureDomSnapshotAfterAction,
@@ -66,21 +65,6 @@ describe('session side effects', () => {
     dedupe.clear('tr_one');
 
     expect(dedupe.shouldSend(snapshot('tr_one', 'hash_b'))).toBe(true);
-  });
-
-  it('dedupes CAPTCHA providers per trace instead of per frame', () => {
-    const dedupe = createCaptchaProviderDedupe();
-
-    expect(dedupe.newProviders('tr_one', ['google_recaptcha'])).toEqual([
-      'google_recaptcha',
-    ]);
-    expect(dedupe.newProviders('tr_one', ['google_recaptcha'])).toEqual([]);
-    expect(dedupe.newProviders('tr_two', ['google_recaptcha'])).toEqual([
-      'google_recaptcha',
-    ]);
-    expect(
-      dedupe.newProviders('tr_one', ['hcaptcha', 'google_recaptcha'])
-    ).toEqual(['hcaptcha']);
   });
 });
 

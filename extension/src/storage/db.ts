@@ -1,7 +1,8 @@
 import Dexie, { type Table } from 'dexie';
-import type { LocalePreference } from '@/i18n';
 import type { BlobRow, CapturedEvent, CaptureSettings, RecordingMode, RecordingRow, UploadManifest } from '@/shared/types';
 import { DEFAULT_API_KEY, DEFAULT_ENDPOINT_URL } from '@/shared/product';
+
+export type LocalePreference = 'auto' | 'en' | 'zh-CN';
 
 export type ConfigRow = {
   id: 'singleton';

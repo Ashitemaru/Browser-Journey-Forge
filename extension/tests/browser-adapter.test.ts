@@ -17,20 +17,6 @@ vi.mock('wxt/browser', () => ({
   browser: browserApi
 }));
 
-function stubChromeRuntime(url: string) {
-  vi.stubGlobal('chrome', {
-    alarms: {
-      create: vi.fn()
-    },
-    runtime: {
-      getURL: vi.fn(() => url)
-    },
-    tabs: {
-      create: vi.fn()
-    }
-  });
-}
-
 describe('browser adapter selection', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -40,31 +26,9 @@ describe('browser adapter selection', () => {
     browserApi.tabs.create.mockReset();
   });
 
-  it('returns Firefox capabilities for moz extension URLs', () => {
-    stubChromeRuntime('moz-extension://extension-id/');
-
-    expect(getBrowserAdapter().capabilities).toMatchObject({
-      browser: 'firefox',
-      screenshots: false,
-      video: false
-    });
-  });
-
-  it('returns Chrome capabilities for chrome extension URLs', () => {
-    stubChromeRuntime('chrome-extension://extension-id/');
-
+  it('always returns the chrome adapter capabilities', () => {
     expect(getBrowserAdapter().capabilities).toMatchObject({
       browser: 'chrome',
-      screenshots: false,
-      video: false
-    });
-  });
-
-  it('falls back to unknown capabilities for unrecognized extension URLs', () => {
-    stubChromeRuntime('safari-web-extension://extension-id/');
-
-    expect(getBrowserAdapter().capabilities).toMatchObject({
-      browser: 'unknown',
       screenshots: false,
       video: false
     });

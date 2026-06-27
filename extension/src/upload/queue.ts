@@ -1,4 +1,3 @@
-import { englishTranslator, type Translator } from '@/i18n';
 import type { RecordingRow, UploadManifest } from '@/shared/types';
 
 export type UploadQueueStats = {
@@ -43,37 +42,22 @@ export function buildUploadQueueStats(
   };
 }
 
-export function uploadQueueChunkLabel(
-  stats: UploadQueueStats,
-  tr: Translator = englishTranslator
-): string {
-  if (!stats.hasManifest) return tr('queue.noManifest');
-  return tr('queue.chunkUploaded', {
-    uploaded: stats.uploadedChunks,
-    total: stats.totalChunks
-  });
+export function uploadQueueChunkLabel(stats: UploadQueueStats): string {
+  if (!stats.hasManifest) return 'No manifest yet';
+  return `${stats.uploadedChunks}/${stats.totalChunks} chunks uploaded`;
 }
 
-export function uploadQueueChunkDetail(
-  stats: UploadQueueStats,
-  tr: Translator = englishTranslator
-): string {
-  if (!stats.hasManifest) return tr('queue.manifestPending');
+export function uploadQueueChunkDetail(stats: UploadQueueStats): string {
+  if (!stats.hasManifest) return 'Manifest will be built when upload starts.';
   const parts = [
-    tr('queue.bytesProgress', {
-      uploadedBytes: formatBytes(stats.uploadedBytes),
-      totalBytes: formatBytes(stats.totalBytes)
-    }),
-    tr('queue.pending', { count: stats.pendingChunks }),
-    tr('queue.mediaPending', {
-      pending: stats.pendingMediaChunks,
-      total: stats.mediaChunks
-    }),
+    `${formatBytes(stats.uploadedBytes)} of ${formatBytes(stats.totalBytes)}`,
+    `${stats.pendingChunks} pending`,
+    `${stats.pendingMediaChunks}/${stats.mediaChunks} media pending`,
   ];
   if (stats.retryChunks > 0) {
-    parts.push(tr('queue.retryChunks', { count: stats.retryChunks }));
+    parts.push(`${stats.retryChunks} retry chunks`);
   }
-  if (stats.finalized) parts.push(tr('queue.finalized'));
+  if (stats.finalized) parts.push('finalized');
   return parts.join(' - ');
 }
 
