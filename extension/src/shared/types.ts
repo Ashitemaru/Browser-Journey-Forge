@@ -1,16 +1,11 @@
 export type TraceSchemaVersion = 'journey_trace_v1';
 export type RecordingMode = 'research_free_form' | 'real_user_free_form';
 export type RecordingStatus =
-  | 'draft'
-  | 'review_required'
-  | 'queued'
+  | 'recording'
+  | 'ready'
   | 'uploading'
-  | 'paused'
-  | 'failed'
   | 'uploaded'
-  | 'processing'
-  | 'accepted'
-  | 'rejected';
+  | 'failed';
 
 export type BrowserCapabilities = {
   browser: 'chrome' | 'firefox' | 'unknown';
@@ -331,14 +326,12 @@ export type IdentityBundle = {
 export type RecordingRow = {
   trace_id: string;
   status: RecordingStatus;
-  capture_paused?: boolean;
   envelope: TraceEnvelope;
   identity?: IdentityBundle;
   created_at: number;
   updated_at: number;
   upload_id?: string;
   last_error?: string;
-  reviewed_at?: number;
 };
 
 export type BlobRow = {

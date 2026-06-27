@@ -27,7 +27,7 @@ describe('storage config', () => {
     testDb = new JourneyForgeDB('journey-forge-test-recordings');
     await testDb.recordings.put({
       trace_id: 'tr_test',
-      status: 'review_required',
+      status: 'ready',
       created_at: 1,
       updated_at: 2,
       envelope: {
@@ -46,7 +46,7 @@ describe('storage config', () => {
         }
       }
     });
-    await expect(testDb.recordings.where('status').equals('review_required').count()).resolves.toBe(1);
+    await expect(testDb.recordings.where('status').equals('ready').count()).resolves.toBe(1);
   });
 
   it('keeps config writes scoped to the singleton row', async () => {

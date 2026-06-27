@@ -26,7 +26,7 @@ export async function startRecording(
   const now = clock.now();
   const row: RecordingRow = {
     trace_id: traceId,
-    status: 'draft',
+    status: 'recording',
     envelope: {
       schema_version: 'journey_trace_v1',
       trace_id: traceId,
@@ -82,8 +82,8 @@ export async function stopRecording(
   return await db.transaction('rw', db.recordings, db.events, async () => {
     const row = await db.recordings.get(traceId);
     if (!row) throw new Error(`recording not found: ${traceId}`);
-    if (row.status !== 'draft') {
-      throw new Error('recording must be draft before it can be stopped');
+    if (row.status !== 'recording') {
+      throw new Error('recording must be recording before it can be stopped');
     }
 
     await db.events.put({
@@ -99,8 +99,7 @@ export async function stopRecording(
 
     const updated: RecordingRow = {
       ...row,
-      status: 'review_required',
-      capture_paused: false,
+      status: 'ready',
       envelope: {
         ...row.envelope,
         ended_at: clock.isoNow(),
@@ -114,142 +113,35 @@ export async function stopRecording(
   });
 }
 
-export async function pauseCapture(
+// Set/overwrite the task label on a stopped (`ready`) recording. Used when the
+// user types a task name at upload time. No-op label values are ignored.
+export async function setRecordingLabel(
   traceId: string,
+  label: string,
   clock: Clock = systemClock
 ): Promise<RecordingRow> {
-  const now = clock.now();
-  return await db.transaction('rw', db.recordings, db.events, async () => {
-    const row = await db.recordings.get(traceId);
-    if (!row) throw new Error(`recording not found: ${traceId}`);
-    if (row.status !== 'draft') {
-      throw new Error('recording must be draft before capture can be paused');
-    }
-    if (row.capture_paused) return row;
-
-    await db.events.put({
-      event_id: createId('ev_'),
-      trace_id: traceId,
-      tab_id: -1,
-      timestamp: now,
-      url: '',
-      kind: 'annotation',
-      annotation_type: 'pause',
-      text: 'capture_paused',
-    });
-
-    const updated: RecordingRow = {
-      ...row,
-      capture_paused: true,
-      updated_at: now,
-    };
-    await db.recordings.put(updated);
-    return updated;
-  });
-}
-
-export async function resumeCapture(
-  traceId: string,
-  clock: Clock = systemClock
-): Promise<RecordingRow> {
-  const now = clock.now();
-  return await db.transaction('rw', db.recordings, db.events, async () => {
-    const row = await db.recordings.get(traceId);
-    if (!row) throw new Error(`recording not found: ${traceId}`);
-    if (row.status !== 'draft') {
-      throw new Error('recording must be draft before capture can be resumed');
-    }
-    if (!row.capture_paused) return row;
-
-    await db.events.put({
-      event_id: createId('ev_'),
-      trace_id: traceId,
-      tab_id: -1,
-      timestamp: now,
-      url: '',
-      kind: 'annotation',
-      annotation_type: 'resume',
-      text: 'capture_resumed',
-    });
-
-    const updated: RecordingRow = {
-      ...row,
-      capture_paused: false,
-      updated_at: now,
-    };
-    await db.recordings.put(updated);
-    return updated;
-  });
-}
-
-export async function saveReviewMetadata(opts: {
-  traceId: string;
-  label: string;
-  description?: string;
-  tags?: string[];
-  clock?: Clock;
-}): Promise<RecordingRow> {
-  const updatedMetadata = await updateReviewMetadata(opts);
-  const clock = opts.clock ?? systemClock;
-  const now = clock.now();
-  const updated: RecordingRow = {
-    ...updatedMetadata,
-    status: 'queued',
-    reviewed_at: now,
-    updated_at: now,
-  };
-  await db.recordings.put(updated);
-
-  return updated;
-}
-
-export async function updateReviewMetadata(opts: {
-  traceId: string;
-  label: string;
-  description?: string;
-  tags?: string[];
-  clock?: Clock;
-}): Promise<RecordingRow> {
-  const row = await db.recordings.get(opts.traceId);
-  if (!row) throw new Error(`recording not found: ${opts.traceId}`);
-  if (row.status !== 'review_required') {
-    throw new Error(
-      'recording must be review_required before metadata can be updated'
-    );
+  const row = await db.recordings.get(traceId);
+  if (!row) throw new Error(`recording not found: ${traceId}`);
+  if (row.status !== 'ready') {
+    throw new Error('recording must be ready before its label can be set');
   }
 
-  const label = opts.label.trim();
-  if (!label) throw new Error('label is required');
-
-  const clock = opts.clock ?? systemClock;
-  const now = clock.now();
-  const envelope = {
-    ...row.envelope,
-    label,
-    tags: opts.tags ?? [],
-  };
-  const description = opts.description?.trim();
-  if (description) {
-    envelope.description = description;
-  } else {
-    delete envelope.description;
-  }
+  const trimmed = label.trim();
+  if (!trimmed) return row;
 
   const updated: RecordingRow = {
     ...row,
-    envelope,
-    updated_at: now,
+    envelope: { ...row.envelope, label: trimmed },
+    updated_at: clock.now(),
   };
   await db.recordings.put(updated);
-
   return updated;
 }
 
 export async function appendEvent(event: CapturedEvent): Promise<void> {
   await db.transaction('rw', db.recordings, db.events, async () => {
     const row = await db.recordings.get(event.trace_id);
-    if (!row || row.status !== 'draft') return;
-    if (row.capture_paused && event.kind !== 'annotation') return;
+    if (!row || row.status !== 'recording') return;
 
     await db.events.put(event);
   });

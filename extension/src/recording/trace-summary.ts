@@ -3,11 +3,7 @@ import type { CapturedEvent, RecordingRow, TraceSummary } from '@/shared/types';
 import { db } from '@/storage/db';
 
 export function shouldUseLiveTraceSummary(recording: RecordingRow): boolean {
-  return (
-    recording.status === 'draft' ||
-    recording.capture_paused === true ||
-    recording.status === 'failed'
-  );
+  return recording.status === 'recording' || recording.status === 'failed';
 }
 
 export async function buildLiveTraceSummary(
@@ -66,7 +62,7 @@ function durationFor(
   if (Number.isFinite(ended)) return Math.max(0, ended - started);
 
   const latestEventTimestamp = latestEventTime(events);
-  if (recording.status === 'draft' && !recording.capture_paused) {
+  if (recording.status === 'recording') {
     return Math.max(
       0,
       Math.max(now(), latestEventTimestamp ?? started) - started

@@ -1,6 +1,6 @@
 import { Blob as NodeBlob } from 'node:buffer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { pollUploadStatus, uploadRecording } from '@/upload/runner';
+import { uploadRecording } from '@/upload/runner';
 import { buildUploadManifest } from '@/upload/manifest';
 import { db, DEFAULT_CONFIG } from '@/storage/db';
 import type { BlobRow, RecordingRow } from '@/shared/types';
@@ -31,7 +31,7 @@ describe('upload runner', () => {
 
     const row = await uploadRecording(traceId);
 
-    expect(row.status).toBe('processing');
+    expect(row.status).toBe('uploaded');
     const uploadPaths = chunkUploadPaths(fetchMock);
     expect(uploadPaths).toEqual([
       '/v1/traces/upl_runner/chunks/1',
@@ -92,8 +92,8 @@ describe('upload runner', () => {
   });
 
   it.each([
-    ['trace id', { status: 'processing', trace_id: 'tr_other' }],
-    ['status', { status: 'mystery', trace_id: traceId }]
+    ['trace id', { status: 'uploaded', trace_id: 'tr_other' }],
+    ['status', { status: '', trace_id: traceId }]
   ])('rejects finalize %s mismatches before marking finalized', async (_label, finalizeBody) => {
     await seedRecording();
     await seedManifest([0]);
@@ -113,43 +113,6 @@ describe('upload runner', () => {
     expect(await db.recordings.get(traceId)).toBeTruthy();
   });
 
-  it('polls upload status and updates the local recording row', async () => {
-    await seedRecording();
-    await db.recordings.update(traceId, { status: 'processing', upload_id: 'upl_runner' });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(String(input));
-        if (init?.method === 'GET' && url.pathname === '/v1/traces/upl_runner/status') {
-          return jsonResponse({ status: 'accepted', accepted_chunks: [0], missing_chunks: [] });
-        }
-        return jsonResponse({ error: `unexpected request ${init?.method ?? 'GET'} ${url.pathname}` }, 500);
-      })
-    );
-
-    await expect(pollUploadStatus(traceId)).resolves.toMatchObject({ status: 'accepted', upload_id: 'upl_runner' });
-    await expect(db.recordings.get(traceId)).resolves.toMatchObject({ status: 'accepted', upload_id: 'upl_runner' });
-  });
-
-  it('stores rejected upload reasons as last errors while polling status', async () => {
-    await seedRecording();
-    await db.recordings.update(traceId, { status: 'processing', upload_id: 'upl_runner' });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(String(input));
-        if (init?.method === 'GET' && url.pathname === '/v1/traces/upl_runner/status') {
-          return jsonResponse({ status: 'rejected', reason: 'judge failed', accepted_chunks: [], missing_chunks: [] });
-        }
-        return jsonResponse({ error: `unexpected request ${init?.method ?? 'GET'} ${url.pathname}` }, 500);
-      })
-    );
-
-    await expect(pollUploadStatus(traceId)).resolves.toMatchObject({
-      status: 'rejected',
-      last_error: 'judge failed'
-    });
-  });
 });
 
 async function seedRecording(): Promise<void> {
@@ -160,7 +123,7 @@ async function seedRecording(): Promise<void> {
   });
   const row: RecordingRow = {
     trace_id: traceId,
-    status: 'queued',
+    status: 'ready',
     created_at: 1,
     updated_at: 1,
     envelope: {

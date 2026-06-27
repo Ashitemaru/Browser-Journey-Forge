@@ -39,8 +39,8 @@ describe('upload queue model', () => {
     expect(uploadQueueChunkDetail(stats)).toContain('1/2 media pending');
   });
 
-  it('describes queued recordings before a manifest exists', () => {
-    const stats = buildUploadQueueStats(recording({ status: 'queued' }), undefined);
+  it('describes ready recordings before a manifest exists', () => {
+    const stats = buildUploadQueueStats(recording({ status: 'ready' }), undefined);
 
     expect(stats.hasManifest).toBe(false);
     expect(uploadQueueChunkLabel(stats)).toBe('No manifest yet');
@@ -51,7 +51,7 @@ describe('upload queue model', () => {
 function recording(patch: Partial<RecordingRow> = {}): RecordingRow {
   return {
     trace_id: 'tr_queue',
-    status: 'queued',
+    status: 'ready',
     created_at: 1,
     updated_at: 2,
     envelope: {

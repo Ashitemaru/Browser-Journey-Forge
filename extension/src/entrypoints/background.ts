@@ -4,9 +4,7 @@ import { createCaptchaProviderDedupe } from '@/capture/session-side-effects';
 import { shouldRecordBrowserNavigationUrl, tabNavigationEvent } from '@/capture/tab-navigation';
 import {
   appendEvent,
-  pauseCapture,
-  resumeCapture,
-  saveReviewMetadata,
+  setRecordingLabel,
   startRecording,
   stopRecording,
 } from '@/recording/recorder';
@@ -14,19 +12,16 @@ import { errorMessage } from '@/shared/errors';
 import { createId } from '@/shared/id';
 import type { CaptchaProvider, CapturedEvent, CaptureSettings, RecordingRow } from '@/shared/types';
 import { db } from '@/storage/db';
-import { pollUploadStatus, uploadRecording } from '@/upload/runner';
+import { uploadRecording } from '@/upload/runner';
 
 type RuntimeMessage =
   | { type: 'get-active-recording' }
   | { type: 'start-recording'; label?: string }
-  | { type: 'pause-capture'; traceId?: string }
-  | { type: 'resume-capture'; traceId?: string }
   | { type: 'stop-recording'; traceId?: string }
   | { type: 'event'; event: CapturedEvent }
   | { type: 'captcha-detected'; traceId?: string; triggerEventId: string; providers: CaptchaProvider[] }
   | { type: 'append-annotation'; traceId?: string; annotationType: 'captcha_solved' | 'captcha_blocked'; text?: string }
   | { type: 'resume-upload'; traceId: string; label?: string }
-  | { type: 'poll-upload-status'; traceId: string }
   | { type: 'delete-recording'; traceId: string };
 
 type SenderLike = {
@@ -90,7 +85,6 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
         traceId: activeTraceId,
         recovered: activeTraceRecovered,
         captureSettings: await captureSettingsForActiveRecording(activeTraceId, activeRow),
-        capturePaused: Boolean(activeRow?.capture_paused),
         row: activeRow
       };
     }
@@ -98,25 +92,7 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
     case 'start-recording': {
       const row = await beginRecording(message.label);
       const captureSettings = await captureSettingsForActiveRecording(row.trace_id, row);
-      return { active: true, traceId: activeTraceId, recovered: false, captureSettings, capturePaused: false, row };
-    }
-
-    case 'pause-capture': {
-      const traceId = message.traceId ?? activeTraceId;
-      if (!traceId) return { active: false, traceId: null, capturePaused: false };
-      const row = await pauseCapture(traceId);
-      const captureSettings = await captureSettingsForActiveRecording(traceId, row);
-      await broadcastRecordingState(true, traceId, captureSettings, true);
-      return { active: true, traceId, recovered: activeTraceRecovered, captureSettings, capturePaused: true, row };
-    }
-
-    case 'resume-capture': {
-      const traceId = message.traceId ?? activeTraceId;
-      if (!traceId) return { active: false, traceId: null, capturePaused: false };
-      const row = await resumeCapture(traceId);
-      const captureSettings = await captureSettingsForActiveRecording(traceId, row);
-      await broadcastRecordingState(true, traceId, captureSettings, false);
-      return { active: true, traceId, recovered: activeTraceRecovered, captureSettings, capturePaused: false, row };
+      return { active: true, traceId: activeTraceId, recovered: false, captureSettings, row };
     }
 
     case 'stop-recording': {
@@ -127,9 +103,9 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
       captchaDedupe.clear(traceId);
       if (activeTraceId === traceId) activeTraceId = null;
       activeTraceRecovered = false;
-      await broadcastRecordingState(false, null, null, false);
+      await broadcastRecordingState(false, null, null);
       await refreshRecordingBadge();
-      return { active: false, traceId: null, recovered: false, captureSettings: null, capturePaused: false, row };
+      return { active: false, traceId: null, recovered: false, captureSettings: null, row };
     }
 
     case 'event': {
@@ -151,18 +127,13 @@ async function handleMessage(message: unknown, sender: SenderLike): Promise<unkn
       return { ok: true, row };
     }
 
-    case 'poll-upload-status': {
-      const row = await pollUploadStatus(message.traceId);
-      return { ok: true, row };
-    }
-
     case 'delete-recording': {
       await deleteRecordingLocal(message.traceId);
       captchaDedupe.clear(message.traceId);
       if (activeTraceId === message.traceId) {
         activeTraceId = null;
         activeTraceRecovered = false;
-        await broadcastRecordingState(false, null, null, false);
+        await broadcastRecordingState(false, null, null);
         await refreshRecordingBadge();
       }
       return { ok: true };
@@ -175,24 +146,19 @@ async function beginRecording(label?: string): Promise<RecordingRow> {
   activeTraceId = row.trace_id;
   activeTraceRecovered = false;
   const captureSettings = await captureSettingsForActiveRecording(activeTraceId, row);
-  await broadcastRecordingState(true, activeTraceId, captureSettings, false);
+  await broadcastRecordingState(true, activeTraceId, captureSettings);
   await refreshRecordingBadge();
   return row;
 }
 
-// A just-stopped recording is `review_required`; the upload runner only accepts
-// queued/failed/paused. Move it to queued (with a label) before uploading.
+// A just-stopped recording is `ready`. If the user typed a task name at upload
+// time, persist it on the row before the upload runner reads the envelope.
 async function ensureUploadable(traceId: string, label?: string): Promise<void> {
+  const trimmed = label?.trim();
+  if (!trimmed) return;
   const row = await db.recordings.get(traceId);
-  if (!row || row.status !== 'review_required') return;
-  const resolvedLabel = label?.trim() || row.envelope.label?.trim() || defaultLabel(row);
-  await saveReviewMetadata({ traceId, label: resolvedLabel });
-}
-
-function defaultLabel(row: RecordingRow): string {
-  const domain = row.envelope.summary.domains[0];
-  const stamp = new Date(row.created_at).toISOString().slice(0, 16).replace('T', ' ');
-  return domain ? `${domain} — ${stamp}` : `Recording ${stamp}`;
+  if (!row || row.status !== 'ready') return;
+  await setRecordingLabel(traceId, trimmed);
 }
 
 async function appendCaptchaDetected(
@@ -217,9 +183,9 @@ async function appendCaptchaDetected(
 }
 
 async function recoverActiveTraceId(): Promise<void> {
-  const drafts = await db.recordings.where('status').equals('draft').toArray();
-  drafts.sort((left, right) => right.updated_at - left.updated_at);
-  const recoveredRow = drafts[0] ?? null;
+  const active = await db.recordings.where('status').equals('recording').toArray();
+  active.sort((left, right) => right.updated_at - left.updated_at);
+  const recoveredRow = active[0] ?? null;
   activeTraceId = recoveredRow?.trace_id ?? null;
   activeTraceRecovered = activeTraceId !== null;
 }
@@ -367,8 +333,7 @@ async function captureSettingsForActiveRecording(traceId: string | null, row: Re
 async function broadcastRecordingState(
   active: boolean,
   traceId: string | null,
-  captureSettings?: CaptureSettings | null,
-  capturePaused = false
+  captureSettings?: CaptureSettings | null
 ): Promise<void> {
   const resolvedCaptureSettings = captureSettings === undefined ? await captureSettingsForActiveRecording(traceId, null) : captureSettings;
   const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
@@ -380,8 +345,7 @@ async function broadcastRecordingState(
           type: 'recording-state',
           active,
           traceId,
-          captureSettings: resolvedCaptureSettings,
-          capturePaused
+          captureSettings: resolvedCaptureSettings
         })
       )
   );
@@ -429,14 +393,11 @@ function isRuntimeMessage(message: unknown): message is RuntimeMessage {
   return (
     type === 'get-active-recording' ||
     type === 'start-recording' ||
-    type === 'pause-capture' ||
-    type === 'resume-capture' ||
     type === 'stop-recording' ||
     type === 'event' ||
     isCaptchaDetectedMessage(message) ||
     isAppendAnnotationMessage(message) ||
     (type === 'resume-upload' && typeof (message as { traceId?: unknown }).traceId === 'string') ||
-    (type === 'poll-upload-status' && typeof (message as { traceId?: unknown }).traceId === 'string') ||
     (type === 'delete-recording' && typeof (message as { traceId?: unknown }).traceId === 'string')
   );
 }

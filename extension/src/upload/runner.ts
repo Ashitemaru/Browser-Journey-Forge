@@ -14,26 +14,7 @@ import {
 import type { RecordingRow, RecordingStatus, UploadManifest } from '@/shared/types';
 import { db, getConfig } from '@/storage/db';
 
-const RESUMABLE_STATUSES: RecordingStatus[] = ['queued', 'failed', 'paused'];
-const FINAL_RECORDING_STATUSES = new Set<RecordingStatus>(['uploaded', 'processing', 'accepted', 'rejected', 'failed']);
-const POLLED_RECORDING_STATUSES = new Set<RecordingStatus>(['uploading', 'uploaded', 'processing', 'accepted', 'rejected', 'failed', 'review_required']);
-
-// The server reports a few statuses in its own vocabulary (ClawBench V2);
-// translate them to the extension's RecordingStatus at the API boundary so the
-// domain type stays clean.
-const SERVER_STATUS_MAP: Record<string, RecordingStatus> = {
-  needs_review: 'review_required',
-  degraded: 'failed',
-};
-
-function mapServerStatus(status: string): string {
-  return SERVER_STATUS_MAP[status] ?? status;
-}
-
-// Judge polling: interval between status checks and the max number of checks
-// before giving up (default ≈ 90 × 2s = 3 minutes).
-const JUDGE_POLL_INTERVAL_MS = 2000;
-const MAX_JUDGE_POLLS = 90;
+const RESUMABLE_STATUSES: RecordingStatus[] = ['ready', 'failed', 'uploading'];
 
 export async function uploadNextRecording(signal?: AbortSignal): Promise<RecordingRow | null> {
   const candidates = await db.recordings.where('status').anyOf(RESUMABLE_STATUSES).toArray();
@@ -45,7 +26,7 @@ export async function uploadNextRecording(signal?: AbortSignal): Promise<Recordi
 export async function uploadRecording(traceId: string, signal?: AbortSignal): Promise<RecordingRow> {
   const row = await db.recordings.get(traceId);
   if (!row) throw new Error(`recording not found: ${traceId}`);
-  if (!RESUMABLE_STATUSES.includes(row.status) && row.status !== 'uploading') {
+  if (!RESUMABLE_STATUSES.includes(row.status)) {
     throw new Error(`recording cannot be uploaded from status: ${row.status}`);
   }
 
@@ -125,26 +106,15 @@ export async function uploadRecording(traceId: string, signal?: AbortSignal): Pr
       uploadId: init.uploadId,
       manifest
     });
-    let finalStatus = validateFinalizeResponse(traceId, finalized);
+    validateFinalizeResponse(traceId, finalized);
 
     manifest.finalized = true;
     await db.uploadManifests.put(manifest);
 
-    if (finalStatus === 'processing') {
-      await updateRecording(traceId, { status: 'processing', upload_id: init.uploadId });
-      const judgeResult = await pollUntilJudged(config, init.uploadId, signal);
-      finalStatus = judgeResult.status;
-      if (finalStatus === 'rejected') {
-        return await updateRecording(traceId, {
-          status: finalStatus,
-          upload_id: init.uploadId,
-          last_error: judgeResult.reason || 'Judge: recording did not pass task requirements'
-        });
-      }
-    }
-
+    // The local server ingests + distills; there is no judge. Once finalize
+    // succeeds the recording is terminally `uploaded`.
     return await updateRecording(traceId, {
-      status: finalStatus,
+      status: 'uploaded',
       upload_id: init.uploadId
     });
   } catch (error) {
@@ -154,51 +124,6 @@ export async function uploadRecording(traceId: string, signal?: AbortSignal): Pr
     });
     throw error;
   }
-}
-
-export async function pollUploadStatus(traceId: string, signal?: AbortSignal): Promise<RecordingRow> {
-  const row = await requireRecording(traceId);
-  if (!row.upload_id) throw new Error(`recording has no upload id: ${traceId}`);
-
-  const config = await getConfig();
-  if (!config.endpoint_url || !config.api_key) {
-    throw new Error('upload endpoint and API key are required before polling upload status');
-  }
-
-  const status = await getTraceUploadStatus({
-    endpointUrl: config.endpoint_url,
-    apiKey: config.api_key,
-    signal,
-    uploadId: row.upload_id
-  });
-  const recordingStatus = validatePolledStatus(status.status);
-  return await updateRecording(traceId, {
-    status: recordingStatus,
-    ...(status.reason ? { last_error: status.reason } : {})
-  });
-}
-
-async function pollUntilJudged(
-  config: { endpoint_url: string; api_key: string },
-  uploadId: string,
-  signal?: AbortSignal
-): Promise<{ status: RecordingStatus; reason?: string }> {
-  for (let i = 0; i < MAX_JUDGE_POLLS; i++) {
-    await new Promise((resolve) => setTimeout(resolve, JUDGE_POLL_INTERVAL_MS));
-    if (signal?.aborted) throw new Error('upload aborted during judge');
-    const status = await getTraceUploadStatus({
-      endpointUrl: config.endpoint_url,
-      apiKey: config.api_key,
-      signal,
-      uploadId
-    });
-    if (status.status !== 'processing') {
-      const polled = validatePolledStatus(status.status);
-      return status.reason !== undefined ? { status: polled, reason: status.reason } : { status: polled };
-    }
-  }
-  console.warn(`[journey-forge] judge still processing after ${MAX_JUDGE_POLLS} polls; leaving as uploaded`);
-  return { status: 'uploaded' as RecordingStatus };
 }
 
 async function loadPayloadManifest(traceId: string): Promise<UploadManifestWithPayload> {
@@ -274,22 +199,10 @@ function validateChunkUploadResponse(
   }
 }
 
-function validateFinalizeResponse(traceId: string, response: { status: string; traceId: string }): RecordingStatus {
-  const mapped = mapServerStatus(response.status);
-  if (response.traceId !== traceId || !FINAL_RECORDING_STATUSES.has(mapped as RecordingStatus)) {
+function validateFinalizeResponse(traceId: string, response: { status: string; traceId: string }): void {
+  if (response.traceId !== traceId || !response.status) {
     throw new Error(
-      `finalize response mismatch: expected trace_id=${traceId} status in ${[...FINAL_RECORDING_STATUSES].join(
-        ','
-      )}, got trace_id=${response.traceId} status=${response.status}`
+      `finalize response mismatch: expected trace_id=${traceId} with a status, got trace_id=${response.traceId} status=${response.status}`
     );
   }
-  return mapped as RecordingStatus;
-}
-
-function validatePolledStatus(status: string): RecordingStatus {
-  const mapped = mapServerStatus(status);
-  if (!POLLED_RECORDING_STATUSES.has(mapped as RecordingStatus)) {
-    throw new Error(`upload status response mismatch: expected status in ${[...POLLED_RECORDING_STATUSES].join(',')}, got ${status}`);
-  }
-  return mapped as RecordingStatus;
 }

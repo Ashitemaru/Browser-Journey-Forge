@@ -2,12 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Dexie from 'dexie';
 import {
   appendEvent,
-  pauseCapture,
-  resumeCapture,
-  saveReviewMetadata,
+  setRecordingLabel,
   startRecording,
   stopRecording,
-  updateReviewMetadata,
 } from '@/recording/recorder';
 import { DEFAULT_CONFIG, db, setConfig } from '@/storage/db';
 import type {
@@ -184,7 +181,7 @@ describe('recorder lifecycle', () => {
     vi.unstubAllGlobals();
   });
 
-  it('starts a draft recording with a persisted lifecycle annotation and no identity', async () => {
+  it('starts a recording with a persisted lifecycle annotation and no identity', async () => {
     stubChromeRuntime();
     await setConfig({
       endpoint_url: 'https://api.example.test',
@@ -200,7 +197,7 @@ describe('recorder lifecycle', () => {
       .equals(row.trace_id)
       .toArray();
 
-    expect(row.status).toBe('draft');
+    expect(row.status).toBe('recording');
     expect(row.identity).toBeUndefined();
     expect(row.envelope).toMatchObject({
       trace_id: row.trace_id,
@@ -210,7 +207,7 @@ describe('recorder lifecycle', () => {
       },
     });
     expect(row.envelope).not.toHaveProperty('identity_bundle_id');
-    expect(persisted?.status).toBe('draft');
+    expect(persisted?.status).toBe('recording');
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       trace_id: row.trace_id,
@@ -236,7 +233,8 @@ describe('recorder lifecycle', () => {
   });
 
   it('requires endpoint config before starting a recording', async () => {
-    await db.config.put(DEFAULT_CONFIG);
+    stubChromeRuntime();
+    await db.config.put({ ...DEFAULT_CONFIG, endpoint_url: '', api_key: '' });
 
     await expect(
       startRecording(fixedClock(100, '2026-06-03T00:00:00.100Z'))
@@ -276,116 +274,63 @@ describe('recorder lifecycle', () => {
     await expect(db.events.count()).resolves.toBe(0);
   });
 
-  it('saveReviewMetadata rejects empty label', async () => {
-    await db.recordings.put(recordingRow('tr_label', 'review_required'));
+  it('setRecordingLabel sets a trimmed label on a ready recording', async () => {
+    await db.recordings.put(recordingRow('tr_label', 'ready'));
 
-    await expect(
-      saveReviewMetadata({ traceId: 'tr_label', label: '   ' })
-    ).rejects.toThrow('label is required');
-
-    const row = await db.recordings.get('tr_label');
-    expect(row?.status).toBe('review_required');
-    expect(row?.envelope).not.toHaveProperty('label');
-  });
-
-  it('saveReviewMetadata rejects draft recordings and leaves them unchanged', async () => {
-    await db.recordings.put(recordingRow('tr_active', 'draft'));
-
-    await expect(
-      saveReviewMetadata({ traceId: 'tr_active', label: 'active journey' })
-    ).rejects.toThrow(
-      'recording must be review_required before metadata can be updated'
+    const row = await setRecordingLabel(
+      'tr_label',
+      '  fill out survey  ',
+      fixedClock(2_000, '2026-06-03T00:00:02.000Z')
     );
 
+    expect(row.status).toBe('ready');
+    expect(row.envelope.label).toBe('fill out survey');
+    expect(row.updated_at).toBe(2_000);
+  });
+
+  it('setRecordingLabel ignores empty labels and leaves the row unchanged', async () => {
+    await db.recordings.put(recordingRow('tr_label_blank', 'ready'));
+
+    const row = await setRecordingLabel('tr_label_blank', '   ');
+
+    expect(row.status).toBe('ready');
+    expect(row.envelope).not.toHaveProperty('label');
+  });
+
+  it('setRecordingLabel rejects recordings that are not ready', async () => {
+    await db.recordings.put(recordingRow('tr_active', 'recording'));
+
+    await expect(
+      setRecordingLabel('tr_active', 'active journey')
+    ).rejects.toThrow('recording must be ready before its label can be set');
+
     const row = await db.recordings.get('tr_active');
-    expect(row?.status).toBe('draft');
+    expect(row?.status).toBe('recording');
     expect(row?.envelope).not.toHaveProperty('label');
   });
 
-  it('appendEvent ignores events for non-draft recordings', async () => {
-    await db.recordings.put(recordingRow('tr_reviewed', 'review_required'));
+  it('appendEvent ignores events for recordings that are not recording', async () => {
+    await db.recordings.put(recordingRow('tr_ready', 'ready'));
 
-    await appendEvent(navigationEvent('ev_ignored', 'tr_reviewed'));
+    await appendEvent(navigationEvent('ev_ignored', 'tr_ready'));
 
     await expect(db.events.get('ev_ignored')).resolves.toBeUndefined();
   });
 
-  it('appendEvent persists events only while the recording is a draft', async () => {
-    await db.recordings.put(recordingRow('tr_draft', 'draft'));
+  it('appendEvent persists events only while the recording is active', async () => {
+    await db.recordings.put(recordingRow('tr_recording', 'recording'));
 
-    await appendEvent(navigationEvent('ev_saved', 'tr_draft'));
+    await appendEvent(navigationEvent('ev_saved', 'tr_recording'));
 
     await expect(db.events.get('ev_saved')).resolves.toMatchObject({
       event_id: 'ev_saved',
-      trace_id: 'tr_draft',
+      trace_id: 'tr_recording',
       kind: 'navigation',
     });
   });
 
-  it('pauses and resumes capture without changing upload status', async () => {
-    await db.recordings.put(recordingRow('tr_pause', 'draft'));
-
-    const paused = await pauseCapture(
-      'tr_pause',
-      fixedClock(500, '2026-06-03T00:00:00.500Z')
-    );
-    await appendEvent(navigationEvent('ev_during_pause', 'tr_pause'));
-    const resumed = await resumeCapture(
-      'tr_pause',
-      fixedClock(600, '2026-06-03T00:00:00.600Z')
-    );
-    const annotations = await db.events
-      .where('trace_id')
-      .equals('tr_pause')
-      .and((event) => event.kind === 'annotation')
-      .toArray();
-
-    expect(paused).toMatchObject({ status: 'draft', capture_paused: true });
-    expect(resumed).toMatchObject({ status: 'draft', capture_paused: false });
-    await expect(db.events.get('ev_during_pause')).resolves.toBeUndefined();
-    expect(
-      annotations.map((event) =>
-        event.kind === 'annotation' ? event.annotation_type : null
-      )
-    ).toEqual(['pause', 'resume']);
-    expect(
-      annotations.map((event) =>
-        event.kind === 'annotation' ? event.text : null
-      )
-    ).toEqual(['capture_paused', 'capture_resumed']);
-  });
-
-  it('clears capture pause state when stopping a paused draft', async () => {
-    await db.recordings.put(recordingRow('tr_stop_paused', 'draft'));
-
-    await pauseCapture(
-      'tr_stop_paused',
-      fixedClock(500, '2026-06-03T00:00:00.500Z')
-    );
-    const stopped = await stopRecording(
-      'tr_stop_paused',
-      fixedClock(600, '2026-06-03T00:00:00.600Z')
-    );
-
-    expect(stopped).toMatchObject({
-      status: 'review_required',
-      capture_paused: false,
-    });
-  });
-
-  it('rejects pausing or resuming non-draft recordings', async () => {
-    await db.recordings.put(recordingRow('tr_review', 'review_required'));
-
-    await expect(pauseCapture('tr_review')).rejects.toThrow(
-      'recording must be draft before capture can be paused'
-    );
-    await expect(resumeCapture('tr_review')).rejects.toThrow(
-      'recording must be draft before capture can be resumed'
-    );
-  });
-
   it('appendEvent writes events inside a transaction that also covers recording state', async () => {
-    await db.recordings.put(recordingRow('tr_append_tx', 'draft'));
+    await db.recordings.put(recordingRow('tr_append_tx', 'recording'));
     let storeNames: string[] = [];
     db.events.hook('creating', () => {
       storeNames = [
@@ -404,9 +349,9 @@ describe('recorder lifecycle', () => {
     );
   });
 
-  it('stopRecording sets review_required and summarizes persisted event domains', async () => {
+  it('stopRecording sets ready and summarizes persisted event domains', async () => {
     await db.recordings.put(
-      recordingRow('tr_stop', 'draft', '1970-01-01T00:00:00.000Z')
+      recordingRow('tr_stop', 'recording', '1970-01-01T00:00:00.000Z')
     );
     await db.events.bulkPut([
       navigationEvent('ev_one', 'tr_stop', {
@@ -428,7 +373,7 @@ describe('recorder lifecycle', () => {
       .and((event) => event.kind === 'annotation')
       .toArray();
 
-    expect(row.status).toBe('review_required');
+    expect(row.status).toBe('ready');
     expect(row.envelope.ended_at).toBe('2026-06-03T00:00:01.000Z');
     expect(row.envelope.summary).toEqual({
       domains: ['example.com', 'shop.example.com'],
@@ -450,26 +395,26 @@ describe('recorder lifecycle', () => {
     });
   });
 
-  it('stopRecording rejects non-draft recordings and leaves status unchanged', async () => {
-    await db.recordings.put(recordingRow('tr_queued', 'queued'));
+  it('stopRecording rejects recordings that are not recording and leaves status unchanged', async () => {
+    await db.recordings.put(recordingRow('tr_ready', 'ready'));
 
     await expect(
-      stopRecording('tr_queued', fixedClock(1_000, '2026-06-03T00:00:01.000Z'))
-    ).rejects.toThrow('recording must be draft before it can be stopped');
+      stopRecording('tr_ready', fixedClock(1_000, '2026-06-03T00:00:01.000Z'))
+    ).rejects.toThrow('recording must be recording before it can be stopped');
 
-    const row = await db.recordings.get('tr_queued');
+    const row = await db.recordings.get('tr_ready');
     const events = await db.events
       .where('trace_id')
-      .equals('tr_queued')
+      .equals('tr_ready')
       .toArray();
-    expect(row?.status).toBe('queued');
+    expect(row?.status).toBe('ready');
     expect(row?.envelope).not.toHaveProperty('ended_at');
     expect(events).toHaveLength(0);
   });
 
   it('rolls back stopRecording when the row update cannot be persisted', async () => {
     await db.recordings.put(
-      recordingRow('tr_stop_rollback', 'draft', '1970-01-01T00:00:00.000Z')
+      recordingRow('tr_stop_rollback', 'recording', '1970-01-01T00:00:00.000Z')
     );
     db.recordings.hook('updating', failOnce('recording update failed'));
 
@@ -485,50 +430,9 @@ describe('recorder lifecycle', () => {
       .where('trace_id')
       .equals('tr_stop_rollback')
       .toArray();
-    expect(row?.status).toBe('draft');
+    expect(row?.status).toBe('recording');
     expect(row?.envelope).not.toHaveProperty('ended_at');
     expect(events).toHaveLength(0);
-  });
-
-  it('saveReviewMetadata queues reviewed recordings with a trimmed label', async () => {
-    await db.recordings.put(recordingRow('tr_queue', 'review_required'));
-
-    const row = await saveReviewMetadata({
-      traceId: 'tr_queue',
-      label: '  fill out survey  ',
-      description: '  short run  ',
-      tags: ['survey'],
-      clock: fixedClock(2_000, '2026-06-03T00:00:02.000Z'),
-    });
-
-    expect(row.status).toBe('queued');
-    expect(row.reviewed_at).toBe(2_000);
-    expect(row.envelope).toMatchObject({
-      label: 'fill out survey',
-      description: 'short run',
-      tags: ['survey'],
-    });
-  });
-
-  it('updateReviewMetadata saves review details without queueing upload', async () => {
-    await db.recordings.put(recordingRow('tr_save_details', 'review_required'));
-
-    const row = await updateReviewMetadata({
-      traceId: 'tr_save_details',
-      label: '  browser checkout  ',
-      description: '  includes payment form  ',
-      tags: ['checkout', 'payment'],
-      clock: fixedClock(3_000, '2026-06-03T00:00:03.000Z'),
-    });
-
-    expect(row.status).toBe('review_required');
-    expect(row.reviewed_at).toBeUndefined();
-    expect(row.updated_at).toBe(3_000);
-    expect(row.envelope).toMatchObject({
-      label: 'browser checkout',
-      description: 'includes payment form',
-      tags: ['checkout', 'payment'],
-    });
   });
 });
 

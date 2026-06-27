@@ -11,9 +11,9 @@ describe('live trace summary', () => {
     await db.recordings.clear();
   });
 
-  it('computes current domains, duration, event counts, and media for paused drafts', async () => {
+  it('computes current domains, duration, event counts, and media for failed recordings', async () => {
     const row = recording('tr_paused', {
-      capture_paused: true,
+      status: 'failed',
       created_at: Date.parse('2026-06-04T00:00:00.000Z'),
       updated_at: Date.parse('2026-06-04T00:00:20.000Z'),
       envelope: {
@@ -94,7 +94,7 @@ describe('live trace summary', () => {
         started_at: '2026-06-04T00:00:00.000Z'
       }
     });
-    const stopped = recording('tr_stopped', { status: 'accepted' });
+    const stopped = recording('tr_stopped', { status: 'uploaded' });
 
     expect(shouldUseLiveTraceSummary(active)).toBe(true);
     expect(shouldUseLiveTraceSummary(stopped)).toBe(false);
@@ -108,7 +108,7 @@ describe('live trace summary', () => {
 function recording(traceId: string, patch: Partial<RecordingRow> = {}): RecordingRow {
   return {
     trace_id: traceId,
-    status: 'draft',
+    status: 'recording',
     created_at: 1,
     updated_at: 1,
     envelope: {

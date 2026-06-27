@@ -57,7 +57,7 @@ describe('i18n', () => {
 function recording(): RecordingRow {
   return {
     trace_id: 'tr_i18n',
-    status: 'queued',
+    status: 'ready',
     created_at: 1,
     updated_at: 2,
     envelope: {

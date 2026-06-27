@@ -17,7 +17,7 @@ export type UploadQueueStats = {
   lastError: string | null;
 };
 
-const RETRY_STATUSES = new Set<RecordingRow['status']>(['failed', 'rejected']);
+const RETRY_STATUSES = new Set<RecordingRow['status']>(['failed']);
 
 export function buildUploadQueueStats(
   recording: RecordingRow,

@@ -203,7 +203,7 @@ describe('upload manifest', () => {
 async function seedRecording(): Promise<void> {
   const row: RecordingRow = {
     trace_id: traceId,
-    status: 'queued',
+    status: 'ready',
     created_at: 1,
     updated_at: 1,
     envelope: {
