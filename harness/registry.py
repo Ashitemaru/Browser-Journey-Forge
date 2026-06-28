@@ -186,3 +186,77 @@ def query_top_k(task_description: str, k: int = 5) -> list[tuple[RegistryEntry, 
 
     results.sort(key=lambda x: -x[1])
     return results[:k]
+
+
+# ── Layer 2: playbook synthesis ───────────────────────────────────────────────
+# Our skills are fine-grained and atomic (one page-level operation each), but a
+# user's instruction is a coarse, multi-step GOAL ("find me the cheapest
+# flight"). Returning a single atomic SKILL.md doesn't cover such a goal — it
+# needs several atomic skills sequenced in the right order. So after layer-1
+# semantic retrieval pulls the relevant atomic skills, this layer asks the LLM to
+# assemble them into ONE ordered, executable playbook tailored to the goal.
+
+PLAYBOOK_PROMPT = """\
+You are assembling a step-by-step PLAYBOOK for a user's high-level goal by
+sequencing several fine-grained, atomic site skills. Each atomic skill below
+covers ONE page-level operation; alone none completes the goal.
+
+## User goal
+{query}
+
+## Relevant atomic skills (each is one page-level operation)
+{skill_blocks}
+
+Produce ONE markdown playbook the agent can follow top-to-bottom to accomplish
+the goal:
+- Order the atomic skills into the logical sequence to reach the goal.
+- For each step: what to do, which atomic skill it draws on (cite its name),
+  key preconditions, and any red lines that must not be violated.
+- Drop atomic skills that are not relevant to THIS goal.
+- Stay concrete and executable; do NOT invent site selectors or steps that the
+  evidence does not support.
+Output markdown only — no JSON, no code fences around the whole thing."""
+
+
+def _read_skill_md(entry: RegistryEntry, limit: int = 3000) -> str:
+    """Best-effort read of an entry's SKILL.md, truncated to keep prompts bounded."""
+    try:
+        text = (config.STATE_DIR / entry.skill_path).read_text()
+    except OSError:
+        return ""
+    return text[:limit]
+
+
+def _skill_block(entry: RegistryEntry, score: float) -> str:
+    md = _read_skill_md(entry)
+    return (
+        f"### {entry.skill_name}  (relevance {score:.2f})\n"
+        f"- capability: {entry.capacity_id}\n"
+        f"- scope: {entry.scope}\n"
+        f"- domains: {', '.join(entry.domains)}\n\n"
+        f"{md}\n"
+    )
+
+
+def synthesize_playbook(
+    query: str,
+    ranked: list[tuple[RegistryEntry, float]],
+    *,
+    max_skills: int = 6,
+) -> str:
+    """Sequence the retrieved atomic skills into one ordered playbook for `query`.
+
+    Raises on LLM failure — the caller decides how to degrade (e.g. concatenate
+    the raw SKILL.md files instead).
+    """
+    chosen = ranked[:max_skills]
+    skill_blocks = "\n".join(_skill_block(e, s) for e, s in chosen)
+    prompt = PLAYBOOK_PROMPT.format(query=query, skill_blocks=skill_blocks)
+
+    from .llm import call_llm
+
+    text, _ = call_llm(prompt, model=config.DISTILL_MODEL, json_mode=False)
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:markdown|md)?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"```$", "", cleaned).strip()
+    return cleaned

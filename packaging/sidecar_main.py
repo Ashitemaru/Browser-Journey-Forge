@@ -43,6 +43,9 @@ def main() -> int:
     # env) and returns distilled skills over stdio. Must short-circuit BEFORE we
     # start uvicorn.
     if len(sys.argv) > 1 and sys.argv[1] == "mcp-skill":
+        # skill_mcp now imports `harness` (semantic retrieval + playbook synthesis),
+        # so both the repo/bundle base AND server/ must be importable.
+        sys.path.insert(0, str(base))
         sys.path.insert(0, str(base / "server"))
         import skill_mcp  # noqa: E402
         skill_mcp.serve()

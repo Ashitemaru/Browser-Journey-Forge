@@ -56,6 +56,56 @@ def _read_skill_md(entry: dict) -> str:
         return ""
 
 
+# ── two-layer retrieval (harness-backed) ──────────────────────────────────────
+# Layer 1 (semantic): harness.registry.query_top_k understands the user's intent
+# (any language, domain-weighted) and returns the relevant ATOMIC skills.
+# Layer 2 (synthesis): harness.registry.synthesize_playbook sequences them into
+# one ordered playbook for the goal. Both need an LLM key, which lives in
+# <JFL_DATA_DIR>/config.json — we inject it into harness.config the same way the
+# server's _apply_harness_config does. If harness or the key is unavailable we
+# degrade to the local token-score path below (no crash, still returns a skill).
+
+_HARNESS_READY = False
+
+
+def _ensure_harness_config() -> bool:
+    """Make harness importable + inject the LLM key/base from config.json.
+
+    Returns True if harness is usable with an LLM key (layers 1+2 available),
+    False otherwise (caller falls back to local token scoring)."""
+    global _HARNESS_READY
+    try:
+        from harness import config as hconfig  # noqa: F401
+    except Exception:  # noqa: BLE001 — frozen/dev path may not expose harness
+        return False
+
+    # Read product config.json (sibling of harness/ state dir).
+    data_dir = os.environ.get("JFL_DATA_DIR")
+    cfg = {}
+    cfg_path = (Path(data_dir) if data_dir else _state_dir().parent) / "config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+
+    key = cfg.get("llm_key") or os.environ.get("SF_LLM_KEY", "")
+    if not key:
+        return False
+    from harness import config as hconfig
+    hconfig.LLM_KEY = key
+    if cfg.get("llm_base"):
+        hconfig.LLM_BASE = str(cfg["llm_base"]).rstrip("/")
+    hconfig.LLM_INSECURE = True  # gateway uses a self-signed chain
+    if cfg.get("distill_model"):
+        hconfig.DISTILL_MODEL = cfg["distill_model"]
+    classify = cfg.get("classify_model") or cfg.get("distill_model")
+    if classify:
+        hconfig.CLASSIFY_MODEL = classify
+        hconfig.BUCKET_MODEL = classify
+    _HARNESS_READY = True
+    return True
+
+
 def _norm(s: str) -> str:
     return (s or "").strip().lower()
 
@@ -113,19 +163,21 @@ TOOLS = [
     {
         "name": "get_skill",
         "description": (
-            "ALWAYS call this FIRST, before doing any browser/web-automation task, "
-            "to load a distilled, site-specific operating procedure for the target "
-            "website. Pass the site domain or URL (e.g. 'google.com/travel/flights' "
-            "or 'flights') or the capability you need. Returns a SKILL.md the agent "
-            "should follow step-by-step. If it returns a skill, follow it; if not, "
-            "proceed normally."
+            "ALWAYS call this FIRST, before doing any browser/web-automation task. "
+            "Pass the user's FULL ORIGINAL GOAL verbatim — a whole sentence is best "
+            "(e.g. 'find me the cheapest flight from Shanghai to Tokyo in July'). Do "
+            "NOT reduce it to keywords. This loads a distilled, site-specific "
+            "operating procedure: for a multi-step goal it returns an ORDERED "
+            "playbook assembled from several site skills; for a single operation it "
+            "returns one SKILL.md. Follow what it returns step-by-step. If nothing "
+            "matches, proceed normally."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Target site domain, full URL, or capability description.",
+                    "description": "The user's full task goal (a whole sentence), or a target site domain / URL.",
                 }
             },
             "required": ["query"],
@@ -151,6 +203,67 @@ def _tool_get_skill(args: dict) -> str:
     skills = _load_registry()
     if not skills:
         return "No distilled skills available yet."
+
+    # Layer 1+2: semantic retrieval → playbook synthesis (needs harness + LLM key).
+    if _ensure_harness_config():
+        try:
+            return _get_skill_via_harness(query)
+        except Exception:  # noqa: BLE001 — any failure degrades to local scoring
+            pass
+
+    # Fallback: local token scoring over the raw registry (offline / no key).
+    return _get_skill_local(query, skills)
+
+
+def _get_skill_via_harness(query: str) -> str:
+    from harness import registry
+
+    ranked = registry.query_top_k(query, k=8)
+    if not ranked:
+        skills = _load_registry()
+        avail = ", ".join(sorted({d for s in skills for d in s.get("domains", [])})) or "(none)"
+        return f"No skill matched '{query}'. Available site skills: {avail}."
+
+    # A single strong match is one atomic operation — return its SKILL.md directly.
+    top_dominates = ranked[0][1] >= 0.85 and (len(ranked) < 2 or ranked[1][1] < 0.5)
+    if len(ranked) == 1 or top_dominates:
+        entry, _ = ranked[0]
+        md = (_state_dir() / entry.skill_path).read_text() if entry.skill_path else ""
+        if md:
+            return (
+                f"# Loaded skill: {entry.capacity_id}\n"
+                f"# domains: {', '.join(entry.domains)}\n"
+                f"# Follow this procedure for the task.\n\n{md}"
+            )
+
+    # Multiple relevant atomic skills → synthesize an ordered playbook for the goal.
+    domains = sorted({d for e, _ in ranked for d in e.domains})
+    try:
+        playbook = registry.synthesize_playbook(query, ranked)
+    except Exception:  # noqa: BLE001 — synthesis failed; concatenate raw skills
+        return _concat_skill_mds(query, ranked)
+    if not playbook.strip():
+        return _concat_skill_mds(query, ranked)
+    used = ", ".join(e.capacity_id for e, _ in ranked[:6])
+    return (
+        f"# Playbook for: {query}\n"
+        f"# domains: {', '.join(domains)}\n"
+        f"# Assembled from site skills: {used}\n"
+        f"# Follow this ordered procedure top-to-bottom.\n\n{playbook}"
+    )
+
+
+def _concat_skill_mds(query: str, ranked: list) -> str:
+    """Degraded layer-2: stitch the top atomic SKILL.md files together in order."""
+    parts = [f"# Relevant skills for: {query}\n# Follow these in order.\n"]
+    for entry, _ in ranked[:6]:
+        md = (_state_dir() / entry.skill_path).read_text() if entry.skill_path else ""
+        if md:
+            parts.append(f"\n---\n## {entry.capacity_id} ({', '.join(entry.domains)})\n\n{md}")
+    return "\n".join(parts)
+
+
+def _get_skill_local(query: str, skills: list[dict]) -> str:
     ranked = sorted(skills, key=lambda e: _score(e, query), reverse=True)
     best = ranked[0]
     if _score(best, query) <= 0:
